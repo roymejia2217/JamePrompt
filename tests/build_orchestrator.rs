@@ -222,7 +222,8 @@ fn build_orchestrator_reports_skipped_targets_and_continues() {
 
     assert!(
         success,
-        "build.sh should succeed when missing targets are skipped"
+        "build.sh should succeed when missing targets are skipped\n{}",
+        output
     );
     assert!(
         output.contains("SKIP rpm"),
