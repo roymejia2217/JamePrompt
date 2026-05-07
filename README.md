@@ -158,19 +158,70 @@ The build orchestrator cleans `target/`, builds the release binary, and then run
 ## Project Structure
 
 ```text
-assets/                 # Application icons and generated hicolor assets
-docs/                   # Banner and screenshots used by the README
-fonts/                  # Icon font assets used by the UI
-packaging/              # Linux package recipes and release scripts
-scripts/                # Helper scripts
-src/                    # Application code
-tests/                  # Integration and smoke tests
-build.rs                # Compile-time asset generation for embedded icons
-build.sh                # Release and packaging orchestrator
-Cargo.toml
-Cargo.lock
-LICENSE
-README.md
+prompt-manager-rust/
+├── assets/
+│   ├── icons/
+│   │   ├── app_icon.png
+│   │   ├── tray_icon.png
+│   │   └── hicolor/
+│   └── images/
+│       ├── app_logo_dark.png
+│       └── app_logo_light.png
+├── docs/
+│   ├── banner.webp
+│   └── screenshots/
+│       ├── about_window.webp
+│       ├── favorites_filter.webp
+│       ├── main_window.webp
+│       ├── main_window_min.webp
+│       ├── prompt_editor.webp
+│       ├── settings_window.webp
+│       └── system_tray.webp
+├── fonts/
+│   ├── icons.toml
+│   └── lucide.ttf
+├── packaging/
+│   ├── appimage/
+│   │   └── build-appimage.sh
+│   ├── arch/
+│   │   └── PKGBUILD
+│   ├── linux/
+│   │   ├── build-deb.sh
+│   │   ├── changelog
+│   │   ├── copyright
+│   │   ├── jame-prompt.1
+│   │   ├── jame-prompt.desktop
+│   │   └── scripts/
+│   └── rpm/
+│       └── jame-prompt.spec
+├── scripts/
+├── src/
+│   ├── autostart.rs
+│   ├── config.rs
+│   ├── db.rs
+│   ├── hotkeys.rs
+│   ├── icon.rs
+│   ├── launch.rs
+│   ├── main.rs
+│   ├── migrations.rs
+│   ├── models.rs
+│   ├── perf.rs
+│   ├── perf_smoke.rs
+│   ├── prompt_repository.rs
+│   ├── prompt_service.rs
+│   ├── settings_service.rs
+│   ├── tray.rs
+│   └── ui.rs
+├── tests/
+│   ├── build_orchestrator.rs
+│   ├── packaging_metadata.rs
+│   └── ui_smoke.rs
+├── build.rs
+├── build.sh
+├── Cargo.toml
+├── Cargo.lock
+├── LICENSE
+└── README.md
 ```
 
 ---
