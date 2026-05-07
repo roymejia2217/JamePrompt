@@ -61,6 +61,22 @@ Note: global hotkeys and paste simulation are X11-oriented. Tray visibility also
 
 ---
 
+## Linux Packaging
+
+JamePrompt supports the following Linux packaging targets:
+
+- Debian
+- Arch
+- Fedora
+- RHEL
+- AppImage
+
+Flatpak is not supported.
+
+The native package builds cover the app's Linux integration features, including global hotkeys, paste simulation, system tray support, and autostart.
+
+---
+
 ## Installation
 
 ```bash
