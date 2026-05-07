@@ -55,17 +55,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build Arch package in Arch Linux container
+      - name: Build Arch package in Arch Linux clean chroot
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
-            -w /workspace \
+            -w /workspace/packaging/arch \
             archlinux:base-devel \
             bash -lc '
-              pacman -Syu --noconfirm
-              pacman -S --noconfirm --needed git rust cargo desktop-file-utils
-              cd packaging/arch
-              makepkg -sf --noconfirm
+              pacman-key --init
+              pacman-key --populate archlinux
+              pacman -Sy --noconfirm --needed archlinux-keyring devtools
+              CHROOT_DIR=/tmp/jame-prompt-archbuild
+              mkarchroot "$CHROOT_DIR/root" base-devel
+              makechrootpkg -c -r "$CHROOT_DIR" -- --noconfirm
             '
 
       - name: Upload Arch package
@@ -90,7 +92,11 @@ jobs:
             fedora:40 \
             bash -lc '
               dnf -y update
-              dnf -y install git cargo rust rpm-build desktop-file-utils gtk3-devel libX11-devel libXtst-devel libxkbcommon-devel libxdo-devel
+              dnf -y install git curl rpm-build desktop-file-utils gtk3-devel libX11-devel libXtst-devel libxkbcommon-devel libxdo-devel
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+              source /root/.cargo/env
+              rustup toolchain install stable
+              rustup default stable
               VERSION="$(sed -n '\''s/^version = "\(.*\)"/\1/p'\'' Cargo.toml | head -n 1)"
               RPM_TOPDIR="$PWD/target/rpmbuild"
               mkdir -p "$RPM_TOPDIR"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}

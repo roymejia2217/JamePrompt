@@ -5,7 +5,7 @@ pkgver=1.0.0
 pkgrel=1
 pkgdesc='JamePrompt lightweight local prompt manager'
 arch=('x86_64')
-url='https://github.com/roymejia2217/prompt-manager-rust'
+url='https://github.com/roymejia2217/JamePrompt'
 license=('MIT')
 depends=(
   'gtk3'
