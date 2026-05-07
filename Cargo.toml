@@ -5,6 +5,11 @@ edition = "2021"
 authors = ["Roy Mejia"]
 description = "JamePrompt — Lightweight and minimal local prompt manager"
 license = "MIT"
+exclude = [
+  "packaging/arch/pkg",
+  "packaging/arch/src",
+  "packaging/arch/target",
+]
 
 [dependencies]
 iced = { version = "0.13.1", features = ["tokio", "image"] }

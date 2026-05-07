@@ -64,28 +64,10 @@ jobs:
             bash -lc '
               pacman-key --init
               pacman-key --populate archlinux
-              pacman -Sy --noconfirm --needed \
-                archlinux-keyring \
-                git \
-                rust \
-                desktop-file-utils \
-                gtk3 \
-                libappindicator-gtk3 \
-                libx11 \
-                libxtst \
-                libxkbcommon \
-                xdotool \
-                fontconfig \
-                freetype2 \
-                gdk-pixbuf2 \
-                hicolor-icon-theme
+              pacman -Sy --noconfirm --needed archlinux-keyring devtools
               useradd -m builder
-              rm -rf /tmp/arch-build
-              cp -a /workspace /tmp/arch-build
-              rm -rf /tmp/arch-build/packaging/arch/pkg /tmp/arch-build/packaging/arch/src
-              chown -R builder:builder /tmp/arch-build
-              su builder -c "cd /tmp/arch-build/packaging/arch && makepkg -f --noconfirm"
-              cp /tmp/arch-build/packaging/arch/*.pkg.tar.zst /workspace/packaging/arch/
+              mkarchroot /tmp/arch-chroot/root base-devel
+              su builder -c "cd /workspace/packaging/arch && makechrootpkg -r /tmp/arch-chroot -U builder -- --noconfirm"
             '
 
       - name: Upload Arch package
