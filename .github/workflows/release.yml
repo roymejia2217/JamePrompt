@@ -66,8 +66,11 @@ jobs:
               pacman-key --populate archlinux
               pacman -Sy --noconfirm --needed archlinux-keyring git rust desktop-file-utils
               useradd -m builder
-              chown -R builder:builder /workspace
-              su builder -c "cd /workspace/packaging/arch && makepkg -sf --noconfirm"
+              rm -rf /tmp/arch-build
+              cp -a /workspace /tmp/arch-build
+              chown -R builder:builder /tmp/arch-build
+              su builder -c "cd /tmp/arch-build/packaging/arch && makepkg -sf --noconfirm"
+              cp /tmp/arch-build/packaging/arch/*.pkg.tar.zst /workspace/packaging/arch/
             '
 
       - name: Upload Arch package
