@@ -4,8 +4,12 @@ Release:        1%{?dist}
 Summary:        JamePrompt lightweight local prompt manager
 
 License:        MIT
-URL:            https://github.com/roymejia2217/prompt-manager-rust
+URL:            https://github.com/roymejia2217/JamePrompt
 Source0:        %{name}-%{version}.tar.gz
+
+# Fedora's automatic debugsource generation can produce an empty
+# debugsourcefiles.list for this Rust GUI package in containerized builds.
+%global debug_package %{nil}
 
 BuildRequires:  cargo
 BuildRequires:  rust
