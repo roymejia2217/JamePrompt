@@ -71,6 +71,22 @@ cargo build --release --locked
 
 ---
 
+## Linux packaging
+
+JamePrompt supports the following Linux packaging targets:
+
+- Debian
+- Arch
+- Fedora
+- RHEL
+- AppImage
+
+Flatpak is not supported.
+
+The native package builds cover the app's Linux integration features, including global hotkeys, paste simulation, system tray support, and autostart.
+
+---
+
 ## Installation
 
 ```bash
