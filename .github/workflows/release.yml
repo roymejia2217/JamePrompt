@@ -69,6 +69,7 @@ jobs:
               printf "builder ALL=(ALL) NOPASSWD: ALL\n" >/etc/sudoers.d/builder
               chmod 440 /etc/sudoers.d/builder
               mkarchroot /tmp/arch-chroot/root base-devel
+              chown -R builder:builder /tmp/arch-chroot
               su builder -c "cd /workspace/packaging/arch && makechrootpkg -r /tmp/arch-chroot -U builder -- --noconfirm"
             '
 
