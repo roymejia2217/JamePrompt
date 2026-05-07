@@ -1,0 +1,56 @@
+# Maintainer: Roy Mejia <roymejia2217@gmail.com>
+
+pkgname=jame-prompt
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='JamePrompt lightweight local prompt manager'
+arch=('x86_64')
+url='https://github.com/roymejia2217/prompt-manager-rust'
+license=('MIT')
+depends=(
+  'gtk3'
+  'libappindicator-gtk3'
+  'libx11'
+  'libxtst'
+  'libxkbcommon'
+  'xdotool'
+  'fontconfig'
+  'freetype2'
+  'gdk-pixbuf2'
+  'hicolor-icon-theme'
+  'desktop-file-utils'
+)
+makedepends=(
+  'cargo'
+  'rust'
+)
+source=()
+sha256sums=()
+_source_root="${startdir}/../.."
+
+build() {
+  cd "${_source_root}"
+  if [ "${JAME_PROMPT_REUSE_RELEASE_BUILD:-0}" != "1" ]; then
+    cargo build --release --locked
+  fi
+}
+
+check() {
+  cd "${_source_root}"
+  cargo test --locked
+}
+
+package() {
+  cd "${_source_root}"
+
+  install -Dm755 "target/release/${pkgname}" "${pkgdir}/usr/bin/${pkgname}"
+  install -Dm644 "packaging/linux/jame-prompt.desktop" "${pkgdir}/usr/share/applications/${pkgname}.desktop"
+  install -Dm644 "packaging/linux/jame-prompt.1" "${pkgdir}/usr/share/man/man1/${pkgname}.1"
+  install -Dm644 "LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 "packaging/linux/copyright" "${pkgdir}/usr/share/doc/${pkgname}/copyright"
+
+  for size in 16 22 24 32 48 64 128 256 512; do
+    install -Dm644 "assets/icons/app_icon.png" \
+      "${pkgdir}/usr/share/icons/hicolor/${size}x${size}/apps/${pkgname}.png"
+  done
+}

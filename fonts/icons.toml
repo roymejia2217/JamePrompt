@@ -1,0 +1,15 @@
+module = "icon"
+
+[icons]
+arrow_left = "arrow-left"
+plus = "plus"
+copy = "copy"
+trash = "trash-2"
+settings = "settings"
+x = "x"
+save = "save"
+keyboard = "keyboard"
+pencil = "pencil"
+eraser = "eraser"
+info = "info"
+star = "star"

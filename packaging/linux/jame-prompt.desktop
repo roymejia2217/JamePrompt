@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=JamePrompt
+Comment=Lightweight local prompt manager
+Exec=jame-prompt
+Icon=jame-prompt
+Terminal=false
+Categories=Utility;
+StartupNotify=true
+StartupWMClass=jame-prompt
