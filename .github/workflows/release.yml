@@ -64,7 +64,21 @@ jobs:
             bash -lc '
               pacman-key --init
               pacman-key --populate archlinux
-              pacman -Sy --noconfirm --needed archlinux-keyring git rust desktop-file-utils
+              pacman -Sy --noconfirm --needed \
+                archlinux-keyring \
+                git \
+                rust \
+                desktop-file-utils \
+                gtk3 \
+                libappindicator-gtk3 \
+                libx11 \
+                libxtst \
+                libxkbcommon \
+                xdotool \
+                fontconfig \
+                freetype2 \
+                gdk-pixbuf2 \
+                hicolor-icon-theme
               useradd -m builder
               rm -rf /tmp/arch-build
               cp -a /workspace /tmp/arch-build
@@ -95,7 +109,7 @@ jobs:
             fedora:40 \
             bash -lc '
               dnf -y update
-              dnf -y install git curl rpm-build desktop-file-utils gtk3-devel libX11-devel libXtst-devel libxkbcommon-devel libxdo-devel
+              dnf -y install git curl rpm-build cargo rust desktop-file-utils gtk3-devel libX11-devel libXtst-devel libxkbcommon-devel libxdo-devel
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
               source /root/.cargo/env
               rustup toolchain install stable
