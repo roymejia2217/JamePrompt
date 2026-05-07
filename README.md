@@ -228,11 +228,6 @@ prompt-manager-rust/
 
 ## Screenshots
 
-<p align="center">
-  <img src="docs/screenshots/main_window.webp" alt="Main window" width="48%">
-  <img src="docs/screenshots/main_window_min.webp" alt="Main window minimized" width="48%">
-</p>
-
 | Screenshot | Description |
 |---|---|
 | [main_window.webp](docs/screenshots/main_window.webp) | Main window showing the prompt list, search, and actions. |
