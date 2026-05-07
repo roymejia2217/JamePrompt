@@ -237,5 +237,6 @@ jobs:
         run: |
           TAG_NAME="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
           gh release create "$TAG_NAME" release-artifacts/* \
+            --repo "${{ github.repository }}" \
             --title "$TAG_NAME" \
             --notes "Automated release for $TAG_NAME"
