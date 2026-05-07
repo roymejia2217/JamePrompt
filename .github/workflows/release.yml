@@ -80,7 +80,9 @@ jobs:
                 fontconfig \
                 freetype2 \
                 gdk-pixbuf2 \
-                hicolor-icon-theme
+                hicolor-icon-theme \
+                pkgconf \
+                sqlite
               useradd -m builder
               mkdir -p /tmp/arch-build
               tar \
@@ -91,7 +93,7 @@ jobs:
                 --exclude=./packaging/arch/target \
                 -cf - -C /workspace . | tar -xf - -C /tmp/arch-build
               chown -R builder:builder /tmp/arch-build
-              su builder -c "cd /tmp/arch-build/packaging/arch && makepkg --nodeps --noconfirm --cleanbuild --clean"
+              su builder -c "cd /tmp/arch-build/packaging/arch && LIBSQLITE3_SYS_USE_PKG_CONFIG=1 makepkg --nodeps --noconfirm --cleanbuild --clean"
               cp /tmp/arch-build/packaging/arch/*.pkg.tar.zst /workspace/packaging/arch/
             '
 

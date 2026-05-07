@@ -18,11 +18,13 @@ depends=(
   'freetype2'
   'gdk-pixbuf2'
   'hicolor-icon-theme'
+  'sqlite'
   'desktop-file-utils'
 )
 makedepends=(
   'cargo'
   'rust'
+  'pkgconf'
 )
 source=()
 sha256sums=()
@@ -31,12 +33,14 @@ _source_root="${startdir}/../.."
 build() {
   cd "${_source_root}"
   if [ "${JAME_PROMPT_REUSE_RELEASE_BUILD:-0}" != "1" ]; then
+    export LIBSQLITE3_SYS_USE_PKG_CONFIG=1
     cargo build --release --locked
   fi
 }
 
 check() {
   cd "${_source_root}"
+  export LIBSQLITE3_SYS_USE_PKG_CONFIG=1
   cargo test --locked
 }
 
