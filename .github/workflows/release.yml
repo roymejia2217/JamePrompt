@@ -10,6 +10,10 @@ on:
         description: Release tag to publish
         required: true
         type: string
+      publish_run_id:
+        description: Existing workflow run ID to publish from without rebuilding packages
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -17,6 +21,7 @@ permissions:
 jobs:
   deb:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_run_id == '' }}
 
     steps:
       - name: Checkout
@@ -50,6 +55,7 @@ jobs:
 
   arch:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_run_id == '' }}
 
     steps:
       - name: Checkout
@@ -106,6 +112,7 @@ jobs:
 
   rpm:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_run_id == '' }}
 
     steps:
       - name: Checkout
@@ -147,6 +154,7 @@ jobs:
 
   appimage:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_run_id == '' }}
 
     steps:
       - name: Checkout
@@ -216,20 +224,46 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
+    if: >-
+      ${{
+        always() &&
+        !cancelled() &&
+        (
+          inputs.publish_run_id != '' ||
+          (
+            needs.deb.result == 'success' &&
+            needs.arch.result == 'success' &&
+            needs.rpm.result == 'success' &&
+            needs.appimage.result == 'success'
+          )
+        )
+      }}
     needs:
       - deb
       - arch
       - rpm
       - appimage
     permissions:
+      actions: read
       contents: write
 
     steps:
-      - name: Download artifacts
+      - name: Download artifacts from current run
+        if: ${{ inputs.publish_run_id == '' }}
         uses: actions/download-artifact@v4
         with:
           path: release-artifacts
           merge-multiple: true
+
+      - name: Download artifacts from existing run
+        if: ${{ inputs.publish_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.publish_run_id }}
 
       - name: Create GitHub release
         env:
@@ -241,7 +275,20 @@ jobs:
             echo "No release artifact files found."
             exit 1
           fi
-          gh release create "$TAG_NAME" "${RELEASE_FILES[@]}" \
-            --repo "${{ github.repository }}" \
-            --title "$TAG_NAME" \
-            --notes "Automated release for $TAG_NAME"
+
+          (
+            cd release-artifacts
+            find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          )
+          RELEASE_FILES+=("release-artifacts/SHA256SUMS")
+
+          if gh release view "$TAG_NAME" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            gh release upload "$TAG_NAME" "${RELEASE_FILES[@]}" \
+              --repo "${{ github.repository }}" \
+              --clobber
+          else
+            gh release create "$TAG_NAME" "${RELEASE_FILES[@]}" \
+              --repo "${{ github.repository }}" \
+              --title "$TAG_NAME" \
+              --notes "Automated release for $TAG_NAME"
+          fi
