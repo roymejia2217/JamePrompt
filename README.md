@@ -230,13 +230,13 @@ prompt-manager-rust/
 
 | Screenshot | Description |
 |---|---|
-| [main_window.webp](docs/screenshots/main_window.webp) | Main window showing the prompt list, search, and actions. |
-| [main_window_min.webp](docs/screenshots/main_window_min.webp) | Minimized state showing the app kept alive in the system tray. |
-| [prompt_editor.webp](docs/screenshots/prompt_editor.webp) | Prompt editor for creating and updating prompt content. |
-| [settings_window.webp](docs/screenshots/settings_window.webp) | Settings window with theme, hotkeys, and autostart options. |
-| [favorites_filter.webp](docs/screenshots/favorites_filter.webp) | Favorites filter view for narrowing the prompt list. |
-| [system_tray.webp](docs/screenshots/system_tray.webp) | System tray behavior with restore and quit actions. |
-| [about_window.webp](docs/screenshots/about_window.webp) | About window with app identity and version information. |
+| <img src="docs/screenshots/main_window.webp" alt="Main window" width="220"> | Main window showing the prompt list, search, and actions. |
+| <img src="docs/screenshots/main_window_min.webp" alt="Main window minimized" width="220"> | Minimized state showing the app kept alive in the system tray. |
+| <img src="docs/screenshots/prompt_editor.webp" alt="Prompt editor" width="220"> | Prompt editor for creating and updating prompt content. |
+| <img src="docs/screenshots/settings_window.webp" alt="Settings window" width="220"> | Settings window with theme, hotkeys, and autostart options. |
+| <img src="docs/screenshots/favorites_filter.webp" alt="Favorites filter" width="220"> | Favorites filter view for narrowing the prompt list. |
+| <img src="docs/screenshots/system_tray.webp" alt="System tray" width="220"> | System tray behavior with restore and quit actions. |
+| <img src="docs/screenshots/about_window.webp" alt="About window" width="220"> | About window with app identity and version information. |
 
 ---
 
