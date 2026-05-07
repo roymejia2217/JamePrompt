@@ -41,7 +41,7 @@ build() {
 check() {
   cd "${_source_root}"
   export LIBSQLITE3_SYS_USE_PKG_CONFIG=1
-  cargo test --locked
+  cargo test --locked --bin jame-prompt
 }
 
 package() {
