@@ -120,7 +120,7 @@ build_rpm() {
     local rpm_output
     rpm_output="$(mktemp)"
 
-    if JAME_PROMPT_REUSE_RELEASE_BUILD=1 rpmbuild \
+    if rpmbuild \
         --define "_topdir $RPM_TOPDIR" \
         --define "_sourcedir $RPM_TOPDIR/SOURCES" \
         -ba "$ROOT_DIR/packaging/rpm/jame-prompt.spec" \
