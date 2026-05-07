@@ -55,19 +55,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build Arch package in Arch Linux clean chroot
+      - name: Build Arch package in Arch Linux container
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
-            -w /workspace/packaging/arch \
+            -w /workspace \
             archlinux:base-devel \
             bash -lc '
               pacman-key --init
               pacman-key --populate archlinux
-              pacman -Sy --noconfirm --needed archlinux-keyring devtools
-              CHROOT_DIR=/tmp/jame-prompt-archbuild
-              mkarchroot "$CHROOT_DIR/root" base-devel
-              makechrootpkg -c -r "$CHROOT_DIR" -- --noconfirm
+              pacman -Sy --noconfirm --needed archlinux-keyring git rust desktop-file-utils
+              useradd -m builder
+              chown -R builder:builder /workspace
+              su builder -c "cd /workspace/packaging/arch && makepkg -sf --noconfirm"
             '
 
       - name: Upload Arch package
