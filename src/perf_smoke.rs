@@ -7,6 +7,11 @@ pub(crate) fn should_run() -> bool {
 }
 
 pub(crate) fn run() {
+    #[cfg(target_os = "linux")]
+    if let Err(error) = gtk::init() {
+        tracing::warn!("GTK initialization failed in perf smoke mode: {error}");
+    }
+
     let app = perf::measure("smoke.app_init", JamePromptApp::default);
     perf::measure("smoke.view", || {
         let _ = app.view();
