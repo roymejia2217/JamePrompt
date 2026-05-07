@@ -173,7 +173,6 @@ src/
 tests/
   build_orchestrator.rs
   packaging_metadata.rs
-  perf_smoke.rs
   ui_smoke.rs
 build.rs
 build.sh
