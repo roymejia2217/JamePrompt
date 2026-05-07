@@ -117,12 +117,25 @@ build_rpm() {
         return 0
     fi
 
+    local rpm_output
+    rpm_output="$(mktemp)"
+
     if JAME_PROMPT_REUSE_RELEASE_BUILD=1 rpmbuild \
         --define "_topdir $RPM_TOPDIR" \
         --define "_sourcedir $RPM_TOPDIR/SOURCES" \
-        -ba "$ROOT_DIR/packaging/rpm/jame-prompt.spec"; then
+        -ba "$ROOT_DIR/packaging/rpm/jame-prompt.spec" \
+        >"$rpm_output" 2>&1; then
+        rm -f "$rpm_output"
         log "DONE rpm"
     else
+        if grep -q "Failed build dependencies:" "$rpm_output"; then
+            rm -f "$rpm_output"
+            record_skip "rpm" "missing RPM build dependencies"
+            return 0
+        fi
+
+        cat "$rpm_output"
+        rm -f "$rpm_output"
         record_failure "rpm" "rpmbuild failed"
     fi
 }
