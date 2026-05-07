@@ -64,11 +64,12 @@ jobs:
             bash -lc '
               pacman-key --init
               pacman-key --populate archlinux
-              pacman -Sy --noconfirm --needed archlinux-keyring devtools
+              pacman -Sy --noconfirm --needed archlinux-keyring devtools sudo
               useradd -m builder
+              printf "builder ALL=(ALL) NOPASSWD: ALL\n" >/etc/sudoers.d/builder
+              chmod 440 /etc/sudoers.d/builder
               mkarchroot /tmp/arch-chroot/root base-devel
-              cd /workspace/packaging/arch
-              makechrootpkg -r /tmp/arch-chroot -U builder -- --noconfirm
+              su builder -c "cd /workspace/packaging/arch && makechrootpkg -r /tmp/arch-chroot -U builder -- --noconfirm"
             '
 
       - name: Upload Arch package
