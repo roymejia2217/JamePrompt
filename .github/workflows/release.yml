@@ -83,7 +83,7 @@ jobs:
               rm -rf /tmp/arch-build
               cp -a /workspace /tmp/arch-build
               chown -R builder:builder /tmp/arch-build
-              su builder -c "cd /tmp/arch-build/packaging/arch && makepkg -sf --noconfirm"
+              su builder -c "cd /tmp/arch-build/packaging/arch && makepkg -f --noconfirm"
               cp /tmp/arch-build/packaging/arch/*.pkg.tar.zst /workspace/packaging/arch/
             '
 
