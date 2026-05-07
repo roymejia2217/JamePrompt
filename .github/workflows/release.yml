@@ -67,7 +67,8 @@ jobs:
               pacman -Sy --noconfirm --needed archlinux-keyring devtools
               useradd -m builder
               mkarchroot /tmp/arch-chroot/root base-devel
-              su builder -c "cd /workspace/packaging/arch && makechrootpkg -r /tmp/arch-chroot -U builder -- --noconfirm"
+              cd /workspace/packaging/arch
+              makechrootpkg -r /tmp/arch-chroot -U builder -- --noconfirm
             '
 
       - name: Upload Arch package
