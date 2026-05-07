@@ -236,7 +236,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG_NAME="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
-          gh release create "$TAG_NAME" release-artifacts/* \
+          mapfile -t RELEASE_FILES < <(find release-artifacts -type f -print | sort)
+          if [ "${#RELEASE_FILES[@]}" -eq 0 ]; then
+            echo "No release artifact files found."
+            exit 1
+          fi
+          gh release create "$TAG_NAME" "${RELEASE_FILES[@]}" \
             --repo "${{ github.repository }}" \
             --title "$TAG_NAME" \
             --notes "Automated release for $TAG_NAME"
