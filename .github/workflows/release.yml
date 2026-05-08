@@ -232,11 +232,31 @@ jobs:
       - name: Validate Windows runtime dependencies
         shell: pwsh
         run: |
-          $dumpbin = Get-ChildItem -Path "${env:ProgramFiles}\Microsoft Visual Studio\2022" -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match '\\Hostx64\\x64\\dumpbin.exe$' } |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1
-          if (-not $dumpbin) {
+          $dumpbinCommand = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
+          $dumpbinPath = if ($dumpbinCommand) { $dumpbinCommand.Source } else { $null }
+          if (-not $dumpbinPath) {
+            $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+            if (Test-Path $vswhere) {
+              $installationPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+              if ($installationPath) {
+                $dumpbinPath = Get-ChildItem -Path (Join-Path $installationPath "VC\Tools\MSVC") -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
+                  Where-Object { $_.FullName -match '\\Hostx64\\x64\\dumpbin.exe$' } |
+                  Sort-Object FullName -Descending |
+                  Select-Object -First 1 -ExpandProperty FullName
+              }
+            }
+          }
+          if (-not $dumpbinPath) {
+            $searchRoots = @(
+              "${env:ProgramFiles}\Microsoft Visual Studio\2022",
+              "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022"
+            ) | Where-Object { Test-Path $_ }
+            $dumpbinPath = Get-ChildItem -Path $searchRoots -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -match '\\Hostx64\\x64\\dumpbin.exe$' } |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $dumpbinPath) {
             throw "Unable to locate dumpbin.exe for Windows runtime dependency validation."
           }
 
@@ -247,7 +267,7 @@ jobs:
           }
 
           foreach ($executable in $executables) {
-            $imports = & $dumpbin.FullName /DEPENDENTS $executable.FullName
+            $imports = & $dumpbinPath /DEPENDENTS $executable.FullName
             foreach ($dll in $forbiddenDlls) {
               if ($imports -match [regex]::Escape($dll)) {
                 throw "$($executable.Name) imports $dll. Windows release artifacts must run on a clean Windows 10 LTSC x64 VM without requiring the Visual C++ Redistributable."
