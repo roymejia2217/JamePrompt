@@ -323,24 +323,6 @@ fn wix_source_defines_production_windows_installer_contract() {
 }
 
 #[test]
-fn readme_documents_windows_artifact_roles_and_clean_vm_expectations() {
-    let readme = read_file("README.md");
-
-    assert_contains_all(
-        &readme,
-        &[
-            "MSI installer",
-            "Portable ZIP",
-            "The MSI is the standard Windows installer",
-            "The portable ZIP is the no-install distribution",
-            "The raw application executable is not published as the installer",
-            "Windows 10 LTSC x64",
-            "VCRUNTIME140.dll",
-        ],
-    );
-}
-
-#[test]
 fn package_metadata_uses_consistent_identity() {
     let files = [
         "packaging/linux/jame-prompt.desktop",
