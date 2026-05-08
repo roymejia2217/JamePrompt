@@ -80,7 +80,12 @@ pub fn sync(enabled: bool) -> Result<(), AutostartError> {
     sync_at(base_dirs.config_dir(), enabled, executable.as_deref())
 }
 
-#[cfg(all(not(target_os = "linux"), not(test)))]
+#[cfg(all(target_os = "windows", not(test)))]
+pub fn sync(enabled: bool) -> Result<(), AutostartError> {
+    sync_windows(enabled)
+}
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "windows"), not(test)))]
 pub fn sync(_enabled: bool) -> Result<(), AutostartError> {
     Ok(())
 }

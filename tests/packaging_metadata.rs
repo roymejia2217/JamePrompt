@@ -253,6 +253,42 @@ fn windows_release_binary_uses_gui_subsystem() {
 }
 
 #[test]
+fn windows_autostart_sync_uses_registry_run_key() {
+    let autostart = read_file("src/autostart.rs");
+
+    assert_contains_all(
+        &autostart,
+        &[
+            "#[cfg(all(target_os = \"windows\", not(test)))]",
+            "pub fn sync(enabled: bool) -> Result<(), AutostartError>",
+            "sync_windows(enabled)",
+            "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+            "set_value(APP_ID, &command)",
+            "delete_value(APP_ID)",
+        ],
+    );
+    assert!(
+        !autostart.contains("#[cfg(all(not(target_os = \"linux\"), not(test)))]\npub fn sync(_enabled: bool) -> Result<(), AutostartError> {\n    Ok(())\n}"),
+        "Windows autostart must not be swallowed by the generic non-Linux no-op sync path"
+    );
+}
+
+#[test]
+fn settings_save_applies_autostart_as_background_task() {
+    let ui = read_file("src/ui.rs");
+
+    assert_contains_all(
+        &ui,
+        &[
+            "SettingsSaved(Result<(), String>)",
+            "Task::perform(",
+            "SettingsService::save_and_apply",
+            "Message::SettingsSaved",
+        ],
+    );
+}
+
+#[test]
 fn wix_source_defines_production_windows_installer_contract() {
     let wix = read_file("wix/main.wxs");
 

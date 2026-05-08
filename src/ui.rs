@@ -68,18 +68,17 @@ use crate::icon;
 use crate::launch::should_show_window_after_hidden_start;
 use crate::models::{Prompt, PromptFilter, PromptId, PromptQuery, PromptSort};
 use crate::perf;
+use crate::settings_service::SettingsService;
 use crate::tray::{pump_platform_events, TrayEvent, TrayHandle};
 
 #[cfg(not(test))]
-fn sync_autostart_enabled(enabled: bool) -> Option<String> {
-    autostart::sync(enabled)
-        .err()
-        .map(|error| format!("Autostart sync failed: {}", error))
+fn sync_autostart_enabled(enabled: bool) -> Result<(), String> {
+    autostart::sync(enabled).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
-fn sync_autostart_enabled(_enabled: bool) -> Option<String> {
-    None
+fn sync_autostart_enabled(_enabled: bool) -> Result<(), String> {
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +111,7 @@ pub enum Message {
     SettingsAutostartToggled(bool),
     SettingsThemeChanged(String),
     SettingsSave,
+    SettingsSaved(Result<(), String>),
     // Info modal
     InfoPressed,
     InfoDismissed,
@@ -214,6 +214,8 @@ impl Default for JamePromptApp {
         });
         let autostart_warning = perf::measure("startup.autostart_sync", || {
             sync_autostart_enabled(settings.autostart_enabled)
+                .err()
+                .map(|error| format!("Autostart sync failed: {}", error))
         });
 
         let hotkey_service = perf::measure("startup.hotkey_service_init", || {
@@ -983,21 +985,25 @@ impl JamePromptApp {
                 }
                 Message::SettingsSave => {
                     let path = get_settings_path();
-                    match self.settings.save(&path) {
-                        Ok(()) => {
-                            if let Some(error) =
-                                sync_autostart_enabled(self.settings.autostart_enabled)
-                            {
-                                self.status_message =
-                                    format!("Settings saved, but autostart sync failed: {}", error);
-                            } else {
-                                self.status_message = "Settings saved".into();
-                            }
+                    let settings = self.settings.clone();
+                    self.status_message = "Saving settings".into();
+                    return Task::perform(
+                        async move {
+                            SettingsService::save_and_apply(&settings, &path, |enabled| {
+                                sync_autostart_enabled(enabled)
+                            })
+                            .map_err(|error| error.to_string())
+                        },
+                        Message::SettingsSaved,
+                    );
+                }
+                Message::SettingsSaved(result) => {
+                    self.status_message = match result {
+                        Ok(()) => "Settings saved".into(),
+                        Err(error) => {
+                            format!("Failed to save settings: {}", error)
                         }
-                        Err(e) => {
-                            self.status_message = format!("Failed to save settings: {}", e);
-                        }
-                    }
+                    };
                 }
                 Message::InfoPressed => {
                     self.show_info = true;
