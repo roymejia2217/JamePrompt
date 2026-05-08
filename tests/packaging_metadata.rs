@@ -266,7 +266,6 @@ fn wix_source_defines_production_windows_installer_contract() {
             "ProgramFiles64Folder",
             "Win64=\"yes\"",
             "ProgramMenuFolder",
-            "ALLUSERS",
             "ApplicationProgramsFolder",
             "Name=\"JamePrompt\"",
             "Target=\"[INSTALLFOLDER]jame-prompt.exe\"",
@@ -280,6 +279,10 @@ fn wix_source_defines_production_windows_installer_contract() {
             "<ComponentRef Id=\"ApplicationShortcut\"",
             "<MajorUpgrade",
         ],
+    );
+    assert!(
+        !wix.contains("Id=\"ALLUSERS\""),
+        "cargo-wix already defines ALLUSERS for per-machine packages; main.wxs must not duplicate it"
     );
 }
 
