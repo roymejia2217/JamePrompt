@@ -175,41 +175,21 @@ jobs:
             desktop-file-utils
 
       - name: Download linuxdeploy
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python3 - <<'PY'
-          import json
-          import pathlib
-          import urllib.request
-
-          def download_latest(repo: str, asset_name: str, output: str) -> None:
-              with urllib.request.urlopen(f"https://api.github.com/repos/{repo}/releases/latest") as response:
-                  release = json.load(response)
-              asset = next(item for item in release["assets"] if item["name"] == asset_name)
-              with urllib.request.urlopen(asset["browser_download_url"]) as response, open(output, "wb") as handle:
-                  handle.write(response.read())
-
-          download_latest("linuxdeploy/linuxdeploy", "linuxdeploy-x86_64.AppImage", "linuxdeploy")
-          pathlib.Path("linuxdeploy").chmod(0o755)
-          PY
+          gh release download --repo linuxdeploy/linuxdeploy --pattern 'linuxdeploy-x86_64.AppImage' --dir .
+          mv linuxdeploy-x86_64.AppImage linuxdeploy
+          chmod +x linuxdeploy
           sudo mv linuxdeploy /usr/local/bin/linuxdeploy
 
       - name: Download appimagetool
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python3 - <<'PY'
-          import json
-          import pathlib
-          import urllib.request
-
-          def download_latest(repo: str, asset_name: str, output: str) -> None:
-              with urllib.request.urlopen(f"https://api.github.com/repos/{repo}/releases/latest") as response:
-                  release = json.load(response)
-              asset = next(item for item in release["assets"] if item["name"] == asset_name)
-              with urllib.request.urlopen(asset["browser_download_url"]) as response, open(output, "wb") as handle:
-                  handle.write(response.read())
-
-          download_latest("AppImage/appimagetool", "appimagetool-x86_64.AppImage", "appimagetool")
-          pathlib.Path("appimagetool").chmod(0o755)
-          PY
+          gh release download --repo AppImage/appimagetool --pattern 'appimagetool-x86_64.AppImage' --dir .
+          mv appimagetool-x86_64.AppImage appimagetool
+          chmod +x appimagetool
           sudo mv appimagetool /usr/local/bin/appimagetool
 
       - name: Build AppImage

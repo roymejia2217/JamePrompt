@@ -212,6 +212,8 @@ fn release_workflow_includes_windows_artifacts_in_the_shared_release_pipeline() 
             "cargo metadata --format-version 1 --no-deps",
             "Where-Object { $_.kind -contains \"bin\" }",
             "Copy-Item $source \"$portableRoot/$binaryName.exe\"",
+            "gh release download --repo linuxdeploy/linuxdeploy",
+            "gh release download --repo AppImage/appimagetool",
         ],
     );
     assert!(
