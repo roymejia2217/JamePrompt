@@ -10,6 +10,12 @@ pub enum AutostartError {
     CreateAutostartDir(std::io::Error),
     WriteDesktopEntry(std::io::Error),
     RemoveDesktopEntry(std::io::Error),
+    #[cfg(target_os = "windows")]
+    RegistryCreate(String),
+    #[cfg(target_os = "windows")]
+    RegistryWrite(String),
+    #[cfg(target_os = "windows")]
+    RegistryRemove(String),
 }
 
 impl fmt::Display for AutostartError {
@@ -29,6 +35,30 @@ impl fmt::Display for AutostartError {
             }
             Self::RemoveDesktopEntry(error) => {
                 write!(f, "unable to remove the autostart desktop entry: {}", error)
+            }
+            #[cfg(target_os = "windows")]
+            Self::RegistryCreate(error) => {
+                write!(
+                    f,
+                    "unable to open or create the Windows run registry key: {}",
+                    error
+                )
+            }
+            #[cfg(target_os = "windows")]
+            Self::RegistryWrite(error) => {
+                write!(
+                    f,
+                    "unable to write the Windows run registry value: {}",
+                    error
+                )
+            }
+            #[cfg(target_os = "windows")]
+            Self::RegistryRemove(error) => {
+                write!(
+                    f,
+                    "unable to remove the Windows run registry value: {}",
+                    error
+                )
             }
         }
     }
@@ -92,6 +122,42 @@ pub(crate) fn sync_at(
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn sync_windows(enabled: bool) -> Result<(), AutostartError> {
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
+    use winreg::RegKey;
+
+    let executable = if enabled {
+        Some(std::env::current_exe().map_err(AutostartError::ExecutableUnavailable)?)
+    } else {
+        None
+    };
+
+    let current_user = RegKey::predef(HKEY_CURRENT_USER);
+    let run_key_path = r"Software\Microsoft\Windows\CurrentVersion\Run";
+
+    if enabled {
+        let (run_key, _) = current_user
+            .create_subkey(run_key_path)
+            .map_err(|error| AutostartError::RegistryCreate(error.to_string()))?;
+        let command = windows_run_command(
+            executable
+                .as_deref()
+                .expect("executable is available when autostart is enabled"),
+        );
+        run_key
+            .set_value(APP_ID, &command)
+            .map_err(|error| AutostartError::RegistryWrite(error.to_string()))?;
+    } else if let Ok(run_key) = current_user.open_subkey_with_flags(run_key_path, KEY_SET_VALUE) {
+        if let Err(error) = run_key.delete_value(APP_ID) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                return Err(AutostartError::RegistryRemove(error.to_string()));
+            }
+        }
+    }
+
+    Ok(())
+}
 pub(crate) fn desktop_entry_path(config_dir: &Path) -> PathBuf {
     config_dir
         .join("autostart")
@@ -123,6 +189,20 @@ fn quote_desktop_argument(path: &Path) -> String {
     let raw = path.to_string_lossy();
     let escaped = raw.replace('\\', "\\\\").replace('"', "\\\"");
     format!("\"{escaped}\"")
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn windows_run_command(executable: &Path) -> String {
+    format!(
+        "{} {}",
+        quote_windows_argument(executable),
+        START_MINIMIZED_ARG
+    )
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn quote_windows_argument(path: &Path) -> String {
+    format!("\"{}\"", path.display())
 }
 
 #[cfg(test)]
@@ -161,6 +241,20 @@ mod tests {
         let contents = desktop_entry_contents(Path::new("/opt/Jame Prompt/jame-prompt"));
 
         assert!(contents.contains("Exec=\"/opt/Jame Prompt/jame-prompt\" --start-minimized"));
+    }
+
+    #[test]
+    fn test_windows_run_command_appends_start_minimized_argument() {
+        let command =
+            windows_run_command(Path::new(r"C:\Program Files\JamePrompt\jame-prompt.exe"));
+
+        assert_eq!(
+            command,
+            format!(
+                "\"C:\\Program Files\\JamePrompt\\jame-prompt.exe\" {}",
+                START_MINIMIZED_ARG
+            )
+        );
     }
 
     #[cfg(target_os = "linux")]

@@ -40,12 +40,12 @@ const APP_LOGO_LIGHT_BYTES: &[u8] = include_bytes!(concat!(
     "/assets/images/app_logo_light.png"
 ));
 
-use std::collections::HashMap;
 use std::cmp::Reverse;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
 use std::time::Duration;
+use std::time::Instant;
 
 use iced::{
     alignment,
@@ -417,7 +417,8 @@ impl JamePromptApp {
     fn sort_prompts(&self, prompts: &mut [Prompt], sort: PromptSort) {
         match sort {
             PromptSort::NameAsc => {
-                prompts.sort_by_cached_key(|prompt| (prompt.name.to_lowercase(), prompt.id.clone()));
+                prompts
+                    .sort_by_cached_key(|prompt| (prompt.name.to_lowercase(), prompt.id.clone()));
             }
             PromptSort::RecentlyUsed => {
                 prompts.sort_by_cached_key(|prompt| {
@@ -458,7 +459,10 @@ impl JamePromptApp {
     }
 
     fn update_prompt_cache(&mut self, prompt: Prompt) {
-        if let Some(existing) = self.all_prompts.iter_mut().find(|existing| existing.id == prompt.id)
+        if let Some(existing) = self
+            .all_prompts
+            .iter_mut()
+            .find(|existing| existing.id == prompt.id)
         {
             *existing = prompt.clone();
         } else {
@@ -620,7 +624,10 @@ impl JamePromptApp {
     pub fn subscription(&self) -> Subscription<Message> {
         let smoke_exit = if self.smoke_mode {
             iced::keyboard::on_key_press(|key, _modifiers| {
-                if matches!(key, iced::keyboard::Key::Named(iced::keyboard::key::Named::F12)) {
+                if matches!(
+                    key,
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::F12)
+                ) {
                     Some(Message::SmokeExitRequested)
                 } else {
                     None

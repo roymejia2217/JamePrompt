@@ -222,6 +222,85 @@ jobs:
           path: dist/*.AppImage
           if-no-files-found: error
 
+  windows:
+    runs-on: windows-latest
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_run_id == '' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install WiX Toolset
+        run: choco install wixtoolset --no-progress -y
+
+      - name: Install cargo-wix
+        run: cargo install cargo-wix --locked
+
+      - name: Build Windows binaries
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc --bins
+
+      - name: Create portable archive
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          $binaryNames = cargo metadata --format-version 1 --no-deps | ConvertFrom-Json |
+            ForEach-Object { $_.packages } |
+            ForEach-Object { $_ } |
+            Where-Object { $_.name -eq "jame-prompt" } |
+            ForEach-Object { $_.targets } |
+            Where-Object { $_.kind -contains "bin" } |
+            ForEach-Object { $_.name }
+          if (-not $binaryNames) {
+            throw "No binary targets were discovered for packaging."
+          }
+
+          $portableRoot = "target/windows-portable"
+          New-Item -ItemType Directory -Force -Path $portableRoot | Out-Null
+          Copy-Item LICENSE "$portableRoot/LICENSE"
+          Copy-Item README.md "$portableRoot/README.md"
+          foreach ($binaryName in $binaryNames) {
+            $source = "target/x86_64-pc-windows-msvc/release/$binaryName.exe"
+            if (-not (Test-Path $source)) {
+              throw "Expected built binary not found: $source"
+            }
+            Copy-Item $source "$portableRoot/$binaryName.exe"
+          }
+          Compress-Archive -Path "$portableRoot/*" -DestinationPath "target/jame-prompt-$version-x86_64-pc-windows-msvc-portable.zip" -Force
+
+      - name: Initialize WiX source
+        shell: pwsh
+        run: cargo wix init . --force
+
+      - name: Build MSI
+        shell: pwsh
+        run: cargo wix
+
+      - name: Upload Windows binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: target/x86_64-pc-windows-msvc/release/*.exe
+          if-no-files-found: error
+
+      - name: Upload portable archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable
+          path: target/jame-prompt-*-x86_64-pc-windows-msvc-portable.zip
+          if-no-files-found: error
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi
+          path: target/wix/*.msi
+          if-no-files-found: error
+
   release:
     runs-on: ubuntu-latest
     if: >-
@@ -243,6 +322,7 @@ jobs:
       - arch
       - rpm
       - appimage
+      - windows
     permissions:
       actions: read
       contents: write

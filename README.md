@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  Lightweight and minimal local prompt manager with SQLite storage, global hotkeys, clipboard integration, autostart, and Linux system tray support.
+  Lightweight and minimal local prompt manager with SQLite storage, global hotkeys, clipboard integration, autostart, and desktop tray support on Linux and Windows.
 </p>
 
 ---
@@ -45,9 +45,9 @@ cargo build --release --locked
 | **Prompt management** | Creates, edits, deletes, and favorites prompts from the main window. |
 | **Clipboard workflow** | Copies prompt content to the clipboard for reuse in other applications. |
 | **Global hotkeys** | Registers optional per-prompt shortcuts and triggers prompt actions from anywhere. |
-| **System tray** | Hides the window to the tray, restores it, and exposes a Quit action. |
+| **System tray** | Hides the window to the tray, restores it, and exposes a Quit action on Linux and Windows. |
 | **Theme settings** | Persists Light and Dark theme selection in `settings.json`. |
-| **Autostart** | Syncs desktop autostart from the settings screen. |
+| **Autostart** | Syncs desktop autostart from the settings screen on Linux and Windows. |
 | **Data migration** | Migrates existing data from the previous `prompt-manager` data directory when available. |
 
 ---
@@ -84,6 +84,43 @@ JamePrompt supports the following Linux packaging targets:
 Flatpak is not supported.
 
 The native package builds cover the app's Linux integration features, including global hotkeys, paste simulation, system tray support, and autostart.
+
+---
+
+## Windows distribution
+
+JamePrompt also ships Windows builds for:
+
+- standalone executable
+- portable ZIP archive
+- MSI installer
+
+The Windows release workflow builds every binary target in the package and packages all resulting executables automatically.
+
+The Windows distribution path is intended to preserve the same core app behavior as Linux:
+
+- local SQLite-backed prompt storage
+- global hotkeys
+- clipboard copy and paste simulation
+- tray-based background operation
+- autostart from the settings screen
+
+Windows 10 and Windows 11 are the expected desktop targets for the first Windows release line.
+
+### Running on Windows
+
+After extracting the portable ZIP or installing the MSI:
+
+```powershell
+.\jame-prompt.exe
+```
+
+If you build from source:
+
+```powershell
+cargo build --release --locked --target x86_64-pc-windows-msvc
+.\target\x86_64-pc-windows-msvc\release\jame-prompt.exe
+```
 
 ---
 

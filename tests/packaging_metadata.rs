@@ -147,11 +147,13 @@ fn readme_documents_supported_package_targets_without_todo_markers() {
         &readme,
         &[
             "Linux packaging",
+            "Windows distribution",
             "Debian",
             "Arch",
             "Fedora",
             "RHEL",
             "AppImage",
+            "Windows",
             "Flatpak is not supported",
         ],
     );
@@ -185,6 +187,42 @@ fn basic_build_script_orchestrates_all_supported_builds() {
     assert!(
         !script.contains("Compilando") && !script.contains("completo"),
         "build.sh must keep generated text in English"
+    );
+}
+
+#[test]
+fn release_workflow_includes_windows_artifacts_in_the_shared_release_pipeline() {
+    let workflow = read_file(".github/workflows/release.yml");
+
+    assert_contains_all(
+        &workflow,
+        &[
+            "runs-on: windows-latest",
+            "Install WiX Toolset",
+            "Install cargo-wix",
+            "Build Windows binaries",
+            "Create portable archive",
+            "Initialize WiX source",
+            "Build MSI",
+            "windows-exe",
+            "windows-portable",
+            "windows-msi",
+            "x86_64-pc-windows-msvc",
+            "cargo build --release --locked --target x86_64-pc-windows-msvc --bins",
+            "cargo metadata --format-version 1 --no-deps",
+            "Where-Object { $_.kind -contains \"bin\" }",
+            "Copy-Item $source \"$portableRoot/$binaryName.exe\"",
+        ],
+    );
+    assert!(
+        workflow.contains("path: target/x86_64-pc-windows-msvc/release/*.exe"),
+        "Windows upload should collect all built executables"
+    );
+    assert!(
+        workflow.contains(
+            "needs:\n      - deb\n      - arch\n      - rpm\n      - appimage\n      - windows"
+        ),
+        "Release job should wait for the Windows artifact job"
     );
 }
 
