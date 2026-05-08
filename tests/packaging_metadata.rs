@@ -219,6 +219,7 @@ fn release_workflow_includes_windows_artifacts_in_the_shared_release_pipeline() 
             "gh release download --repo AppImage/appimagetool",
             "cargo wix --no-build --target x86_64-pc-windows-msvc",
             "--target-bin-dir \"target/$env:WINDOWS_TARGET/release\"",
+            "--nocapture",
         ],
     );
     assert!(
@@ -253,6 +254,7 @@ fn wix_source_defines_production_windows_installer_contract() {
             "Manufacturer=\"Roy Mejia\"",
             "InstallScope=\"perMachine\"",
             "ProgramFiles64Folder",
+            "Win64=\"yes\"",
             "ProgramMenuFolder",
             "ApplicationProgramsFolder",
             "Name=\"JamePrompt\"",

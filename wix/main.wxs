@@ -40,7 +40,7 @@
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="$(var.PlatformProgramFilesFolder)">
         <Directory Id="INSTALLFOLDER" Name="JamePrompt">
-          <Component Id="ApplicationFiles" Guid="FF5F63D3-87B1-4605-9EDB-C19B7334D520">
+          <Component Id="ApplicationFiles" Guid="FF5F63D3-87B1-4605-9EDB-C19B7334D520" Win64="yes">
             <File
               Id="JamePromptExecutable"
               Name="jame-prompt.exe"
@@ -60,7 +60,7 @@
     </Directory>
 
     <DirectoryRef Id="ApplicationProgramsFolder">
-      <Component Id="ApplicationShortcut" Guid="9B01EB53-DD71-4762-8C32-63FCFFC6825A">
+      <Component Id="ApplicationShortcut" Guid="9B01EB53-DD71-4762-8C32-63FCFFC6825A" Win64="yes">
         <Shortcut
           Id="ApplicationStartMenuShortcut"
           Name="JamePrompt"
