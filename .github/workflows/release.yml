@@ -254,7 +254,7 @@ jobs:
 
       - name: Initialize WiX source
         shell: pwsh
-        run: cargo wix init . --force
+        run: cargo wix init --force
 
       - name: Build MSI
         shell: pwsh
