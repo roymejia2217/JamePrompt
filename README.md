@@ -89,13 +89,16 @@ The native package builds cover the app's Linux integration features, including 
 
 ## Windows distribution
 
-JamePrompt also ships Windows builds for:
+JamePrompt ships production Windows builds for:
 
-- standalone executable
-- portable ZIP archive
 - MSI installer
+- Portable ZIP
 
-The Windows release workflow builds every binary target in the package and packages all resulting executables automatically.
+The MSI is the standard Windows installer. It installs JamePrompt under Program Files, registers the app in Windows Apps & Features, creates a Start Menu shortcut, and removes those entries during uninstall.
+
+The portable ZIP is the no-install distribution. Extract it anywhere and run `jame-prompt.exe` from the extracted folder.
+
+The raw application executable is not published as the installer. The release workflow keeps the MSI and portable ZIP as the supported Windows user-facing artifacts.
 
 The Windows distribution path is intended to preserve the same core app behavior as Linux:
 
@@ -105,7 +108,7 @@ The Windows distribution path is intended to preserve the same core app behavior
 - tray-based background operation
 - autostart from the settings screen
 
-Windows 10 and Windows 11 are the expected desktop targets for the first Windows release line.
+Windows 10 LTSC x64, Windows 10, and Windows 11 are the expected desktop targets for the first Windows release line. Windows release builds are validated so a clean Windows 10 LTSC x64 VM does not fail at launch with a missing `VCRUNTIME140.dll` runtime dependency.
 
 ### Running on Windows
 

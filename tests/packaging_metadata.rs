@@ -201,10 +201,10 @@ fn release_workflow_includes_windows_artifacts_in_the_shared_release_pipeline() 
             "Install WiX Toolset",
             "Install cargo-wix",
             "Build Windows binaries",
+            "RUSTFLAGS: -C target-feature=+crt-static",
+            "Validate Windows runtime dependencies",
             "Create portable archive",
-            "Initialize WiX source",
             "Build MSI",
-            "windows-exe",
             "windows-portable",
             "windows-msi",
             "x86_64-pc-windows-msvc",
@@ -214,18 +214,73 @@ fn release_workflow_includes_windows_artifacts_in_the_shared_release_pipeline() 
             "Copy-Item $source \"$portableRoot/$binaryName.exe\"",
             "gh release download --repo linuxdeploy/linuxdeploy",
             "gh release download --repo AppImage/appimagetool",
-            "cargo wix init --force",
+            "cargo wix --no-build --target x86_64-pc-windows-msvc",
+            "--target-bin-dir \"target/$env:WINDOWS_TARGET/release\"",
         ],
     );
     assert!(
-        workflow.contains("path: target/x86_64-pc-windows-msvc/release/*.exe"),
-        "Windows upload should collect all built executables"
+        !workflow.contains("cargo wix init --force"),
+        "Release workflow must use tracked WiX sources instead of regenerating MSI metadata"
+    );
+    assert!(
+        !workflow.contains("name: windows-exe"),
+        "Raw application executables should not be published as installer artifacts"
     );
     assert!(
         workflow.contains(
             "needs:\n      - deb\n      - arch\n      - rpm\n      - appimage\n      - windows"
         ),
         "Release job should wait for the Windows artifact job"
+    );
+    assert!(
+        workflow.contains("needs.windows.result == 'success'"),
+        "Release job should require successful Windows artifacts before publishing"
+    );
+}
+
+#[test]
+fn wix_source_defines_production_windows_installer_contract() {
+    let wix = read_file("wix/main.wxs");
+
+    assert_contains_all(
+        &wix,
+        &[
+            "<Product",
+            "Name=\"JamePrompt\"",
+            "Manufacturer=\"Roy Mejia\"",
+            "InstallScope=\"perMachine\"",
+            "ProgramFiles64Folder",
+            "ProgramMenuFolder",
+            "ApplicationProgramsFolder",
+            "Name=\"JamePrompt\"",
+            "Target=\"[#JamePromptExecutable]\"",
+            "WorkingDirectory=\"INSTALLFOLDER\"",
+            "Icon=\"AppIcon.ico\"",
+            "<RemoveFolder",
+            "On=\"uninstall\"",
+            "<RegistryValue",
+            "KeyPath=\"yes\"",
+            "<ComponentRef Id=\"ApplicationShortcut\"",
+            "<MajorUpgrade",
+        ],
+    );
+}
+
+#[test]
+fn readme_documents_windows_artifact_roles_and_clean_vm_expectations() {
+    let readme = read_file("README.md");
+
+    assert_contains_all(
+        &readme,
+        &[
+            "MSI installer",
+            "Portable ZIP",
+            "The MSI is the standard Windows installer",
+            "The portable ZIP is the no-install distribution",
+            "The raw application executable is not published as the installer",
+            "Windows 10 LTSC x64",
+            "VCRUNTIME140.dll",
+        ],
     );
 }
 

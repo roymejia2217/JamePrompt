@@ -205,6 +205,11 @@ jobs:
   windows:
     runs-on: windows-latest
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_run_id == '' }}
+    env:
+      WINDOWS_TARGET: x86_64-pc-windows-msvc
+      WINDOWS_PORTABLE_DIR: target/windows-portable
+      FORBIDDEN_RUNTIME_DLLS: VCRUNTIME140.dll,VCRUNTIME140_1.dll,MSVCP140.dll,MSVCP140_1.dll
+      RUSTFLAGS: -C target-feature=+crt-static
 
     steps:
       - name: Checkout
@@ -213,7 +218,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ env.WINDOWS_TARGET }}
 
       - name: Install WiX Toolset
         run: choco install wixtoolset --no-progress -y
@@ -223,6 +228,32 @@ jobs:
 
       - name: Build Windows binaries
         run: cargo build --release --locked --target x86_64-pc-windows-msvc --bins
+
+      - name: Validate Windows runtime dependencies
+        shell: pwsh
+        run: |
+          $dumpbin = Get-ChildItem -Path "${env:ProgramFiles}\Microsoft Visual Studio\2022" -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\Hostx64\\x64\\dumpbin.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $dumpbin) {
+            throw "Unable to locate dumpbin.exe for Windows runtime dependency validation."
+          }
+
+          $forbiddenDlls = $env:FORBIDDEN_RUNTIME_DLLS.Split(",", [System.StringSplitOptions]::RemoveEmptyEntries)
+          $executables = Get-ChildItem "target/$env:WINDOWS_TARGET/release" -Filter "*.exe"
+          if (-not $executables) {
+            throw "No Windows executables were found for runtime dependency validation."
+          }
+
+          foreach ($executable in $executables) {
+            $imports = & $dumpbin.FullName /DEPENDENTS $executable.FullName
+            foreach ($dll in $forbiddenDlls) {
+              if ($imports -match [regex]::Escape($dll)) {
+                throw "$($executable.Name) imports $dll. Windows release artifacts must run on a clean Windows 10 LTSC x64 VM without requiring the Visual C++ Redistributable."
+              }
+            }
+          }
 
       - name: Create portable archive
         shell: pwsh
@@ -239,39 +270,30 @@ jobs:
             throw "No binary targets were discovered for packaging."
           }
 
-          $portableRoot = "target/windows-portable"
+          $portableRoot = $env:WINDOWS_PORTABLE_DIR
           New-Item -ItemType Directory -Force -Path $portableRoot | Out-Null
           Copy-Item LICENSE "$portableRoot/LICENSE"
           Copy-Item README.md "$portableRoot/README.md"
           foreach ($binaryName in $binaryNames) {
-            $source = "target/x86_64-pc-windows-msvc/release/$binaryName.exe"
+            $source = "target/$env:WINDOWS_TARGET/release/$binaryName.exe"
             if (-not (Test-Path $source)) {
               throw "Expected built binary not found: $source"
             }
             Copy-Item $source "$portableRoot/$binaryName.exe"
           }
-          Compress-Archive -Path "$portableRoot/*" -DestinationPath "target/jame-prompt-$version-x86_64-pc-windows-msvc-portable.zip" -Force
-
-      - name: Initialize WiX source
-        shell: pwsh
-        run: cargo wix init --force
+          Compress-Archive -Path "$portableRoot/*" -DestinationPath "target/JamePrompt-$version-x64-portable.zip" -Force
 
       - name: Build MSI
         shell: pwsh
-        run: cargo wix
-
-      - name: Upload Windows binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-exe
-          path: target/x86_64-pc-windows-msvc/release/*.exe
-          if-no-files-found: error
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          cargo wix --no-build --target x86_64-pc-windows-msvc --target-bin-dir "target/$env:WINDOWS_TARGET/release" --output "target/wix/JamePrompt-$version-x64.msi"
 
       - name: Upload portable archive
         uses: actions/upload-artifact@v4
         with:
           name: windows-portable
-          path: target/jame-prompt-*-x86_64-pc-windows-msvc-portable.zip
+          path: target/JamePrompt-*-x64-portable.zip
           if-no-files-found: error
 
       - name: Upload MSI
@@ -293,7 +315,8 @@ jobs:
             needs.deb.result == 'success' &&
             needs.arch.result == 'success' &&
             needs.rpm.result == 'success' &&
-            needs.appimage.result == 'success'
+            needs.appimage.result == 'success' &&
+            needs.windows.result == 'success'
           )
         )
       }}

@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?if $(sys.BUILDARCH) = x64 or $(sys.BUILDARCH) = arm64 ?>
+  <?define PlatformProgramFilesFolder = "ProgramFiles64Folder" ?>
+<?else ?>
+  <?define PlatformProgramFilesFolder = "ProgramFilesFolder" ?>
+<?endif ?>
+
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+    Id="*"
+    Name="JamePrompt"
+    UpgradeCode="727D035B-A88B-4E52-93CA-879E36D7A02E"
+    Manufacturer="Roy Mejia"
+    Language="1033"
+    Codepage="1252"
+    Version="$(var.Version)">
+
+    <Package
+      Id="*"
+      Keywords="Installer"
+      Description="JamePrompt desktop prompt manager"
+      Manufacturer="Roy Mejia"
+      InstallerVersion="500"
+      Languages="1033"
+      Compressed="yes"
+      InstallScope="perMachine"
+      SummaryCodepage="1252" />
+
+    <MajorUpgrade
+      Schedule="afterInstallInitialize"
+      DowngradeErrorMessage="A newer version of [ProductName] is already installed. Setup will now exit." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon.ico" SourceFile="assets\icons\app_icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/roymejia2217/JamePrompt" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="$(var.PlatformProgramFilesFolder)">
+        <Directory Id="INSTALLFOLDER" Name="JamePrompt">
+          <Component Id="ApplicationFiles" Guid="FF5F63D3-87B1-4605-9EDB-C19B7334D520">
+            <File
+              Id="JamePromptExecutable"
+              Name="jame-prompt.exe"
+              DiskId="1"
+              Source="$(var.CargoTargetBinDir)\jame-prompt.exe"
+              KeyPath="yes"
+              Checksum="yes" />
+            <File Id="LicenseFile" Name="LICENSE" DiskId="1" Source="LICENSE" />
+            <File Id="ReadmeFile" Name="README.md" DiskId="1" Source="README.md" />
+          </Component>
+        </Directory>
+      </Directory>
+
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="JamePrompt" />
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="ApplicationShortcut" Guid="9B01EB53-DD71-4762-8C32-63FCFFC6825A">
+        <Shortcut
+          Id="ApplicationStartMenuShortcut"
+          Name="JamePrompt"
+          Description="JamePrompt desktop prompt manager"
+          Target="[#JamePromptExecutable]"
+          WorkingDirectory="INSTALLFOLDER"
+          Icon="AppIcon.ico" />
+        <RemoveFolder Id="ApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue
+          Root="HKLM"
+          Key="Software\JamePrompt"
+          Name="installed"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature
+      Id="MainApplication"
+      Title="JamePrompt"
+      Description="Installs JamePrompt and its Start Menu shortcut."
+      Level="1"
+      ConfigurableDirectory="INSTALLFOLDER"
+      AllowAdvertise="no"
+      Display="expand"
+      Absent="disallow">
+      <ComponentRef Id="ApplicationFiles" />
+      <ComponentRef Id="ApplicationShortcut" />
+    </Feature>
+
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" />
+
+    <UI>
+      <UIRef Id="WixUI_InstallDir" />
+    </UI>
+    <WixVariable Id="WixUILicenseRtf" Value="wix\License.rtf" />
+  </Product>
+</Wix>
