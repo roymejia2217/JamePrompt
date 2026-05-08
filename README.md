@@ -166,7 +166,7 @@ The `settings.json` file in the application data directory stores persistent pre
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `hotkeys_enabled` | No | Enables per-prompt global hotkeys when set to `true`. Defaults to `false`. |
+| `hotkeys_enabled` | No | Enables per-prompt global hotkeys when set to `true`. Defaults to `true`. |
 | `autostart_enabled` | No | Syncs desktop autostart when set to `true`. Defaults to `false`. |
 | `theme` | No | Selects the UI theme. Use `Dark` or `Light`. Defaults to `Dark`. |
 | `JAME_PROMPT_PERF` | No | Enables performance sampling and report generation. |

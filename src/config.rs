@@ -108,7 +108,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            hotkeys_enabled: false,
+            hotkeys_enabled: true,
             autostart_enabled: false,
             theme: "Dark".to_string(),
         }
@@ -142,8 +142,8 @@ mod tests {
     fn test_settings_default_values() {
         let s = Settings::default();
         assert!(
-            !s.hotkeys_enabled,
-            "Default hotkeys_enabled should be false"
+            s.hotkeys_enabled,
+            "Default hotkeys_enabled should be true so saved prompt shortcuts work on clean installs"
         );
         assert!(
             !s.autostart_enabled,
@@ -257,7 +257,7 @@ mod tests {
         let path = dir.path().join("nonexistent.json");
 
         let loaded = Settings::load(&path);
-        assert!(!loaded.hotkeys_enabled);
+        assert!(loaded.hotkeys_enabled);
         assert!(!loaded.autostart_enabled);
         assert_eq!(loaded.theme, "Dark");
     }
@@ -272,7 +272,7 @@ mod tests {
 
         let loaded = Settings::load(&path);
         assert!(
-            !loaded.hotkeys_enabled,
+            loaded.hotkeys_enabled,
             "Corrupt settings should fall back to the default hotkeys state"
         );
         assert!(

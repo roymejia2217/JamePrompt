@@ -36,6 +36,7 @@
     <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
     <Property Id="ARPHELPLINK" Value="https://github.com/roymejia2217/JamePrompt" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Property Id="ALLUSERS" Value="1" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="$(var.PlatformProgramFilesFolder)">
@@ -54,7 +55,7 @@
         </Directory>
       </Directory>
 
-      <Directory Id="CommonProgramsFolder">
+      <Directory Id="ProgramMenuFolder">
         <Directory Id="ApplicationProgramsFolder" Name="JamePrompt" />
       </Directory>
     </Directory>
@@ -70,7 +71,7 @@
           Icon="AppIcon.ico" />
         <RemoveFolder Id="ApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
         <RegistryValue
-          Root="HKLM"
+          Root="HKCU"
           Key="Software\JamePrompt"
           Name="installed"
           Type="integer"

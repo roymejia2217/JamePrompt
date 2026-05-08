@@ -243,6 +243,16 @@ fn release_workflow_includes_windows_artifacts_in_the_shared_release_pipeline() 
 }
 
 #[test]
+fn windows_release_binary_uses_gui_subsystem() {
+    let main = read_file("src/main.rs");
+
+    assert_contains_all(
+        &main,
+        &["windows_subsystem = \"windows\"", "not(debug_assertions)"],
+    );
+}
+
+#[test]
 fn wix_source_defines_production_windows_installer_contract() {
     let wix = read_file("wix/main.wxs");
 
@@ -255,7 +265,8 @@ fn wix_source_defines_production_windows_installer_contract() {
             "InstallScope=\"perMachine\"",
             "ProgramFiles64Folder",
             "Win64=\"yes\"",
-            "CommonProgramsFolder",
+            "ProgramMenuFolder",
+            "ALLUSERS",
             "ApplicationProgramsFolder",
             "Name=\"JamePrompt\"",
             "Target=\"[INSTALLFOLDER]jame-prompt.exe\"",
@@ -264,6 +275,7 @@ fn wix_source_defines_production_windows_installer_contract() {
             "<RemoveFolder",
             "On=\"uninstall\"",
             "<RegistryValue",
+            "Root=\"HKCU\"",
             "KeyPath=\"yes\"",
             "<ComponentRef Id=\"ApplicationShortcut\"",
             "<MajorUpgrade",
