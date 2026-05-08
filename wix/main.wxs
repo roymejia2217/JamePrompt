@@ -54,7 +54,7 @@
         </Directory>
       </Directory>
 
-      <Directory Id="ProgramMenuFolder">
+      <Directory Id="CommonProgramsFolder">
         <Directory Id="ApplicationProgramsFolder" Name="JamePrompt" />
       </Directory>
     </Directory>
@@ -65,7 +65,7 @@
           Id="ApplicationStartMenuShortcut"
           Name="JamePrompt"
           Description="JamePrompt desktop prompt manager"
-          Target="[#JamePromptExecutable]"
+          Target="[INSTALLFOLDER]jame-prompt.exe"
           WorkingDirectory="INSTALLFOLDER"
           Icon="AppIcon.ico" />
         <RemoveFolder Id="ApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
