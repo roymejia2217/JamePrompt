@@ -108,8 +108,6 @@ The Windows distribution path is intended to preserve the same core app behavior
 - tray-based background operation
 - autostart from the settings screen
 
-Windows 10 LTSC x64, Windows 10, and Windows 11 are the expected desktop targets for the first Windows release line. Windows release builds are validated so a clean Windows 10 LTSC x64 VM does not fail at launch with a missing `VCRUNTIME140.dll` runtime dependency.
-
 ### Running on Windows
 
 After extracting the portable ZIP or installing the MSI:
