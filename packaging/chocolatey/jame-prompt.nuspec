@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>jame-prompt</id>
+    <version>1.0.0</version>
+    <title>JamePrompt</title>
+    <authors>Roy Mejia</authors>
+    <owners>Roy Mejia</owners>
+    <projectUrl>https://github.com/roymejia2217/JamePrompt</projectUrl>
+    <packageSourceUrl>https://github.com/roymejia2217/JamePrompt/tree/main/packaging/chocolatey</packageSourceUrl>
+    <licenseUrl>https://github.com/roymejia2217/JamePrompt/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/roymejia2217/JamePrompt</projectSourceUrl>
+    <docsUrl>https://github.com/roymejia2217/JamePrompt#readme</docsUrl>
+    <bugTrackerUrl>https://github.com/roymejia2217/JamePrompt/issues</bugTrackerUrl>
+    <tags>jame-prompt prompt-manager prompts ai productivity local sqlite hotkeys</tags>
+    <summary>Lightweight and minimal local prompt manager.</summary>
+    <description>JamePrompt is a lightweight local prompt manager with SQLite storage, global hotkeys, clipboard integration, autostart, and desktop tray support on Linux and Windows.</description>
+    <releaseNotes>https://github.com/roymejia2217/JamePrompt/releases/tag/v1.0.0</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

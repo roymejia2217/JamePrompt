@@ -20,6 +20,16 @@ fn assert_contains_all(content: &str, expected: &[&str]) {
     }
 }
 
+fn package_version() -> String {
+    let cargo = read_file("Cargo.toml");
+    cargo
+        .lines()
+        .find_map(|line| line.strip_prefix("version = \""))
+        .and_then(|value| value.strip_suffix('"'))
+        .map(str::to_string)
+        .expect("Cargo.toml should define a package version")
+}
+
 #[test]
 fn release_workflow_includes_windows_artifacts_in_the_shared_release_pipeline() {
     let workflow = read_file(".github/workflows/release.yml");
@@ -149,5 +159,141 @@ fn wix_source_defines_production_windows_installer_contract() {
     assert!(
         !wix.contains("Id=\"ALLUSERS\""),
         "cargo-wix already defines ALLUSERS for per-machine packages; main.wxs must not duplicate it"
+    );
+}
+
+#[test]
+fn winget_manifests_are_ready_for_msi_submission() {
+    let version = package_version();
+    let base = format!("packaging/winget/manifests/r/RoyMejia/JamePrompt/{version}");
+    let version_manifest = read_file(&format!("{base}/RoyMejia.JamePrompt.yaml"));
+    let locale_manifest = read_file(&format!("{base}/RoyMejia.JamePrompt.locale.en-US.yaml"));
+    let installer_manifest = read_file(&format!("{base}/RoyMejia.JamePrompt.installer.yaml"));
+
+    assert_contains_all(
+        &version_manifest,
+        &[
+            "PackageIdentifier: RoyMejia.JamePrompt",
+            &format!("PackageVersion: {version}"),
+            "DefaultLocale: en-US",
+            "ManifestType: version",
+        ],
+    );
+    assert_contains_all(
+        &locale_manifest,
+        &[
+            "PackageIdentifier: RoyMejia.JamePrompt",
+            &format!("PackageVersion: {version}"),
+            "Publisher: Roy Mejia",
+            "PackageName: JamePrompt",
+            "PackageUrl: https://github.com/roymejia2217/JamePrompt",
+            "License: MIT",
+            "LicenseUrl: https://github.com/roymejia2217/JamePrompt/blob/main/LICENSE",
+            "ShortDescription: Lightweight and minimal local prompt manager",
+            "ManifestType: defaultLocale",
+        ],
+    );
+    assert_contains_all(
+        &installer_manifest,
+        &[
+            "PackageIdentifier: RoyMejia.JamePrompt",
+            &format!("PackageVersion: {version}"),
+            "InstallerType: msi",
+            "Scope: machine",
+            "InstallModes:",
+            "- silent",
+            "UpgradeBehavior: install",
+            &format!(
+                "InstallerUrl: https://github.com/roymejia2217/JamePrompt/releases/download/v{version}/JamePrompt-{version}-x64.msi"
+            ),
+            "InstallerSha256: 740798A2A471DA3F689C42F0BC160685D6B5742CDBDF2D612C5B1049DA67F9B8",
+            "AppsAndFeaturesEntries:",
+            "DisplayName: JamePrompt",
+            "Publisher: Roy Mejia",
+            "ManifestType: installer",
+        ],
+    );
+}
+
+#[test]
+fn chocolatey_package_metadata_uses_official_release_msi() {
+    let version = package_version();
+    let nuspec = read_file("packaging/chocolatey/jame-prompt.nuspec");
+    let install = read_file("packaging/chocolatey/tools/chocolateyInstall.ps1");
+    let uninstall = read_file("packaging/chocolatey/tools/chocolateyUninstall.ps1");
+
+    assert_contains_all(
+        &nuspec,
+        &[
+            "<id>jame-prompt</id>",
+            &format!("<version>{version}</version>"),
+            "<title>JamePrompt</title>",
+            "<authors>Roy Mejia</authors>",
+            "<projectUrl>https://github.com/roymejia2217/JamePrompt</projectUrl>",
+            "<licenseUrl>https://github.com/roymejia2217/JamePrompt/blob/main/LICENSE</licenseUrl>",
+            "<packageSourceUrl>https://github.com/roymejia2217/JamePrompt/tree/main/packaging/chocolatey</packageSourceUrl>",
+            "<tags>jame-prompt prompt-manager prompts ai productivity local sqlite hotkeys</tags>",
+        ],
+    );
+    assert_contains_all(
+        &install,
+        &[
+            "$packageName = 'jame-prompt'",
+            "$softwareName = 'JamePrompt*'",
+            "$installerType = 'msi'",
+            "$silentArgs = '/qn /norestart'",
+            &format!(
+                "$url64 = 'https://github.com/roymejia2217/JamePrompt/releases/download/v{version}/JamePrompt-{version}-x64.msi'"
+            ),
+            "$checksum64 = '740798A2A471DA3F689C42F0BC160685D6B5742CDBDF2D612C5B1049DA67F9B8'",
+            "$checksumType64 = 'sha256'",
+            "Install-ChocolateyPackage",
+        ],
+    );
+    assert_contains_all(
+        &uninstall,
+        &[
+            "$packageName = 'jame-prompt'",
+            "$softwareName = 'JamePrompt*'",
+            "$installerType = 'msi'",
+            "$silentArgs = '/qn /norestart'",
+            "Get-UninstallRegistryKey",
+            "Uninstall-ChocolateyPackage",
+        ],
+    );
+}
+
+#[test]
+fn windows_distribution_docs_capture_submission_and_release_contract() {
+    let docs = read_file("docs/distribution/windows.md");
+
+    assert_contains_all(
+        &docs,
+        &[
+            "# Windows Distribution",
+            "GitHub Releases are the canonical binary source",
+            "Winget",
+            "Chocolatey",
+            "JamePrompt-1.0.0-x64.msi",
+            "SHA256SUMS",
+            "winget validate",
+            "Windows Sandbox",
+            "choco pack",
+            "choco install jame-prompt",
+            "Do not announce Winget or Chocolatey availability until the package has been accepted by the target repository.",
+        ],
+    );
+}
+
+#[test]
+fn release_workflow_publishes_checksums_with_artifacts() {
+    let workflow = read_file(".github/workflows/release.yml");
+
+    assert_contains_all(
+        &workflow,
+        &[
+            "find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS",
+            "RELEASE_FILES+=(\"release-artifacts/SHA256SUMS\")",
+        ],
     );
 }
