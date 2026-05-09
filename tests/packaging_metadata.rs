@@ -264,6 +264,24 @@ fn chocolatey_package_metadata_uses_official_release_msi() {
 }
 
 #[test]
+fn chocolatey_powershell_scripts_use_utf8_bom_encoding() {
+    for relative in [
+        "packaging/chocolatey/tools/chocolateyInstall.ps1",
+        "packaging/chocolatey/tools/chocolateyUninstall.ps1",
+    ] {
+        let path = repo_path(relative);
+        let bytes = std::fs::read(&path)
+            .unwrap_or_else(|error| panic!("Expected {} to be readable: {}", path.display(), error));
+
+        assert!(
+            bytes.starts_with(&[0xef, 0xbb, 0xbf]),
+            "{} should use UTF-8 with BOM for Chocolatey PowerShell compatibility",
+            relative
+        );
+    }
+}
+
+#[test]
 fn windows_distribution_docs_capture_submission_and_release_contract() {
     let docs = read_file("docs/distribution/windows.md");
 
