@@ -218,6 +218,14 @@ pub struct JamePromptApp {
     tray: Option<TrayHandle>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ImportReviewControls {
+    show_import_mode_controls: bool,
+    show_duplicate_summary: bool,
+    show_duplicate_controls: bool,
+    show_replace_warning: bool,
+}
+
 impl Default for JamePromptApp {
     fn default() -> Self {
         let (db, startup_warning) = perf::measure("startup.database_open", || {
@@ -556,9 +564,31 @@ impl JamePromptApp {
 
     fn prompt_list_empty_message(&self) -> &'static str {
         if self.all_prompts.is_empty() {
-            "Select a prompt from the list"
+            "Create or import a prompt to get started"
         } else {
             "No prompts match your filters"
+        }
+    }
+
+    fn prompt_detail_empty_message(&self) -> &'static str {
+        if self.all_prompts.is_empty() {
+            "Create or import a prompt to get started"
+        } else {
+            "Select a prompt from the list"
+        }
+    }
+
+    fn import_review_controls(&self, preview: &PromptImportPreview) -> ImportReviewControls {
+        let has_existing_prompts = !self.all_prompts.is_empty();
+        let has_duplicates = !preview.duplicate_names.is_empty();
+        let merge_selected = matches!(self.pending_import_mode, ImportMode::Merge);
+        let replace_selected = matches!(self.pending_import_mode, ImportMode::ReplaceAll);
+
+        ImportReviewControls {
+            show_import_mode_controls: has_existing_prompts,
+            show_duplicate_summary: has_duplicates,
+            show_duplicate_controls: has_existing_prompts && has_duplicates && merge_selected,
+            show_replace_warning: has_existing_prompts && replace_selected,
         }
     }
 
@@ -1214,6 +1244,11 @@ impl JamePromptApp {
                     }
                 },
                 Message::ImportModeSelected(mode) => {
+                    if self.all_prompts.is_empty() && matches!(mode, ImportMode::ReplaceAll) {
+                        self.pending_import_mode = ImportMode::Merge;
+                        self.status_message = "Import will add prompts".into();
+                        return Task::none();
+                    }
                     self.pending_import_mode = mode;
                     self.status_message = match mode {
                         ImportMode::Merge => "Import will merge with existing prompts".into(),
@@ -1666,7 +1701,7 @@ impl JamePromptApp {
 
             column![
                 Space::with_height(Length::Fill),
-                text("Select a prompt from the list")
+                text(self.prompt_detail_empty_message())
                     .size(EMPTY_STATE_TEXT_SIZE)
                     .color(self.theme().extended_palette().secondary.strong.color),
                 Space::with_height(Length::Fill),
@@ -1954,54 +1989,81 @@ impl JamePromptApp {
                 .pending_import_preview
                 .as_ref()
                 .expect("Import preview should exist when import modal is shown");
+            let controls = self.import_review_controls(preview);
             let duplicate_count = preview.duplicate_names.len();
-            let duplicate_text = if duplicate_count == 0 {
-                "No duplicate prompt names found".to_string()
-            } else {
-                format!(
+            let duplicate_summary: Element<'_, Message> = if controls.show_duplicate_summary {
+                text(format!(
                     "{} duplicate prompt names found: {}",
                     duplicate_count,
                     preview.duplicate_names.join(", ")
-                )
+                ))
+                .size(MODAL_BODY_TEXT_SIZE)
+                .into()
+            } else {
+                Space::with_height(0).into()
             };
-            let replace_warning: Element<'_, Message> =
-                if matches!(self.pending_import_mode, ImportMode::ReplaceAll) {
-                    text("This will remove all current prompts before importing the backup.")
-                        .size(MODAL_BODY_TEXT_SIZE)
-                        .color(self.theme().extended_palette().danger.strong.color)
-                        .into()
-                } else {
-                    Space::with_height(0).into()
-                };
-            let duplicate_controls: Element<'_, Message> =
-                if duplicate_count > 0 && matches!(self.pending_import_mode, ImportMode::Merge) {
-                    row![
-                        button(text("Skip duplicates"))
-                            .on_press(Message::DuplicateModeSelected(DuplicateMode::Skip))
-                            .padding(CONTROL_PADDING)
-                            .style(
-                                if matches!(self.pending_duplicate_mode, DuplicateMode::Skip) {
-                                    primary_button_style
-                                } else {
-                                    button::secondary
-                                }
-                            ),
-                        button(text("Overwrite duplicates"))
-                            .on_press(Message::DuplicateModeSelected(DuplicateMode::Overwrite))
-                            .padding(CONTROL_PADDING)
-                            .style(
-                                if matches!(self.pending_duplicate_mode, DuplicateMode::Overwrite) {
-                                    primary_button_style
-                                } else {
-                                    button::secondary
-                                }
-                            ),
-                    ]
-                    .spacing(10)
+            let replace_warning: Element<'_, Message> = if controls.show_replace_warning {
+                text("This will remove all current prompts before importing the backup.")
+                    .size(MODAL_BODY_TEXT_SIZE)
+                    .color(self.theme().extended_palette().danger.strong.color)
                     .into()
-                } else {
-                    Space::with_height(0).into()
-                };
+            } else {
+                Space::with_height(0).into()
+            };
+            let duplicate_controls: Element<'_, Message> = if controls.show_duplicate_controls {
+                row![
+                    button(text("Skip duplicates"))
+                        .on_press(Message::DuplicateModeSelected(DuplicateMode::Skip))
+                        .padding(CONTROL_PADDING)
+                        .style(
+                            if matches!(self.pending_duplicate_mode, DuplicateMode::Skip) {
+                                primary_button_style
+                            } else {
+                                button::secondary
+                            }
+                        ),
+                    button(text("Overwrite duplicates"))
+                        .on_press(Message::DuplicateModeSelected(DuplicateMode::Overwrite))
+                        .padding(CONTROL_PADDING)
+                        .style(
+                            if matches!(self.pending_duplicate_mode, DuplicateMode::Overwrite) {
+                                primary_button_style
+                            } else {
+                                button::secondary
+                            }
+                        ),
+                ]
+                .spacing(10)
+                .into()
+            } else {
+                Space::with_height(0).into()
+            };
+            let import_mode_controls: Element<'_, Message> = if controls.show_import_mode_controls {
+                row![
+                    button(text("Merge"))
+                        .on_press(Message::ImportModeSelected(ImportMode::Merge))
+                        .padding(CONTROL_PADDING)
+                        .style(if matches!(self.pending_import_mode, ImportMode::Merge) {
+                            primary_button_style
+                        } else {
+                            button::secondary
+                        }),
+                    button(text("Replace all"))
+                        .on_press(Message::ImportModeSelected(ImportMode::ReplaceAll))
+                        .padding(CONTROL_PADDING)
+                        .style(
+                            if matches!(self.pending_import_mode, ImportMode::ReplaceAll) {
+                                primary_button_style
+                            } else {
+                                button::secondary
+                            }
+                        ),
+                ]
+                .spacing(10)
+                .into()
+            } else {
+                Space::with_height(0).into()
+            };
 
             let confirm_label = if matches!(self.pending_import_mode, ImportMode::ReplaceAll) {
                 "Replace prompts"
@@ -2026,29 +2088,9 @@ impl JamePromptApp {
                         preview.imported_count
                     ))
                     .size(MODAL_BODY_TEXT_SIZE),
-                    text(duplicate_text).size(MODAL_BODY_TEXT_SIZE),
+                    duplicate_summary,
                     Space::with_height(MODAL_SECTION_SPACING),
-                    row![
-                        button(text("Merge"))
-                            .on_press(Message::ImportModeSelected(ImportMode::Merge))
-                            .padding(CONTROL_PADDING)
-                            .style(if matches!(self.pending_import_mode, ImportMode::Merge) {
-                                primary_button_style
-                            } else {
-                                button::secondary
-                            }),
-                        button(text("Replace all"))
-                            .on_press(Message::ImportModeSelected(ImportMode::ReplaceAll))
-                            .padding(CONTROL_PADDING)
-                            .style(
-                                if matches!(self.pending_import_mode, ImportMode::ReplaceAll) {
-                                    primary_button_style
-                                } else {
-                                    button::secondary
-                                }
-                            ),
-                    ]
-                    .spacing(10),
+                    import_mode_controls,
                     duplicate_controls,
                     replace_warning,
                     Space::with_height(20),
@@ -3379,6 +3421,42 @@ mod tests {
 
         assert_eq!(
             app.prompt_list_empty_message(),
+            "Create or import a prompt to get started"
+        );
+    }
+
+    #[test]
+    fn detail_empty_state_invites_creation_when_no_prompts_exist() {
+        let app = JamePromptApp::with_database(Database::in_memory().unwrap());
+
+        assert_eq!(
+            app.prompt_detail_empty_message(),
+            "Create or import a prompt to get started"
+        );
+    }
+
+    #[test]
+    fn detail_empty_state_requests_selection_when_prompts_exist() {
+        let db = Database::in_memory().expect("Failed to create in-memory database");
+        db.insert(&Prompt {
+            id: String::new(),
+            name: "Alpha".to_string(),
+            content: "Content".to_string(),
+            hotkey: None,
+            hotkey_enabled: true,
+            favorite: false,
+            created_at: String::new(),
+            updated_at: String::new(),
+            last_used_at: None,
+            use_count: 0,
+            ..Prompt::default()
+        })
+        .expect("Insert should succeed");
+        let mut app = JamePromptApp::with_database(db);
+        app.selected_id = None;
+
+        assert_eq!(
+            app.prompt_detail_empty_message(),
             "Select a prompt from the list"
         );
     }
@@ -3407,6 +3485,95 @@ mod tests {
             app.prompt_list_empty_message(),
             "No prompts match your filters"
         );
+    }
+
+    #[test]
+    fn import_review_hides_replace_and_duplicate_controls_for_empty_database() {
+        let app = JamePromptApp::with_database(Database::in_memory().unwrap());
+        let controls = app.import_review_controls(&PromptImportPreview {
+            imported_count: 1,
+            duplicate_names: Vec::new(),
+        });
+
+        assert!(!controls.show_import_mode_controls);
+        assert!(!controls.show_duplicate_summary);
+        assert!(!controls.show_duplicate_controls);
+        assert!(!controls.show_replace_warning);
+    }
+
+    #[test]
+    fn import_review_shows_replace_choice_when_existing_prompts_exist() {
+        let db = Database::in_memory().expect("Failed to create in-memory database");
+        db.insert(&Prompt {
+            id: String::new(),
+            name: "Existing".to_string(),
+            content: "Content".to_string(),
+            hotkey: None,
+            hotkey_enabled: true,
+            favorite: false,
+            created_at: String::new(),
+            updated_at: String::new(),
+            last_used_at: None,
+            use_count: 0,
+            ..Prompt::default()
+        })
+        .expect("Insert should succeed");
+        let app = JamePromptApp::with_database(db);
+        let controls = app.import_review_controls(&PromptImportPreview {
+            imported_count: 1,
+            duplicate_names: Vec::new(),
+        });
+
+        assert!(controls.show_import_mode_controls);
+        assert!(!controls.show_duplicate_summary);
+        assert!(!controls.show_duplicate_controls);
+        assert!(!controls.show_replace_warning);
+    }
+
+    #[test]
+    fn import_review_shows_duplicate_controls_only_for_merge_with_duplicates() {
+        let db = Database::in_memory().expect("Failed to create in-memory database");
+        db.insert(&Prompt {
+            id: String::new(),
+            name: "Existing".to_string(),
+            content: "Content".to_string(),
+            hotkey: None,
+            hotkey_enabled: true,
+            favorite: false,
+            created_at: String::new(),
+            updated_at: String::new(),
+            last_used_at: None,
+            use_count: 0,
+            ..Prompt::default()
+        })
+        .expect("Insert should succeed");
+        let mut app = JamePromptApp::with_database(db);
+        let preview = PromptImportPreview {
+            imported_count: 1,
+            duplicate_names: vec!["Existing".to_string()],
+        };
+
+        app.pending_import_mode = ImportMode::Merge;
+        let merge_controls = app.import_review_controls(&preview);
+        assert!(merge_controls.show_duplicate_summary);
+        assert!(merge_controls.show_duplicate_controls);
+        assert!(!merge_controls.show_replace_warning);
+
+        app.pending_import_mode = ImportMode::ReplaceAll;
+        let replace_controls = app.import_review_controls(&preview);
+        assert!(replace_controls.show_duplicate_summary);
+        assert!(!replace_controls.show_duplicate_controls);
+        assert!(replace_controls.show_replace_warning);
+    }
+
+    #[test]
+    fn replace_all_import_mode_is_ignored_when_database_is_empty() {
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+
+        let _ = app.update(Message::ImportModeSelected(ImportMode::ReplaceAll));
+
+        assert!(matches!(app.pending_import_mode, ImportMode::Merge));
+        assert_eq!(app.status_message, "Import will add prompts");
     }
 
     #[test]
