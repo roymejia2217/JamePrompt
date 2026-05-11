@@ -1,7 +1,7 @@
 # Maintainer: Roy Mejia <roymejia2217@gmail.com>
 
 pkgname=jame-prompt
-pkgver=1.0.0
+pkgver=1.1.0
 pkgrel=1
 pkgdesc='JamePrompt lightweight local prompt manager'
 arch=('x86_64')

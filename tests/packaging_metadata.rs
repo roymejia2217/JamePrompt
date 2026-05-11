@@ -20,14 +20,8 @@ fn assert_contains_all(content: &str, expected: &[&str]) {
     }
 }
 
-fn package_version() -> String {
-    let cargo = read_file("Cargo.toml");
-    cargo
-        .lines()
-        .find_map(|line| line.strip_prefix("version = \""))
-        .and_then(|value| value.strip_suffix('"'))
-        .map(str::to_string)
-        .expect("Cargo.toml should define a package version")
+fn latest_submitted_windows_package_version() -> &'static str {
+    "1.0.0"
 }
 
 #[test]
@@ -164,7 +158,7 @@ fn wix_source_defines_production_windows_installer_contract() {
 
 #[test]
 fn winget_manifests_are_ready_for_msi_submission() {
-    let version = package_version();
+    let version = latest_submitted_windows_package_version();
     let base = format!("packaging/winget/manifests/r/RoyMejia/JamePrompt/{version}");
     let version_manifest = read_file(&format!("{base}/RoyMejia.JamePrompt.yaml"));
     let locale_manifest = read_file(&format!("{base}/RoyMejia.JamePrompt.locale.en-US.yaml"));
@@ -217,7 +211,7 @@ fn winget_manifests_are_ready_for_msi_submission() {
 
 #[test]
 fn chocolatey_package_metadata_uses_official_release_msi() {
-    let version = package_version();
+    let version = latest_submitted_windows_package_version();
     let nuspec = read_file("packaging/chocolatey/jame-prompt.nuspec");
     let install = read_file("packaging/chocolatey/tools/chocolateyInstall.ps1");
     let uninstall = read_file("packaging/chocolatey/tools/chocolateyUninstall.ps1");
@@ -270,8 +264,9 @@ fn chocolatey_powershell_scripts_use_utf8_bom_encoding() {
         "packaging/chocolatey/tools/chocolateyUninstall.ps1",
     ] {
         let path = repo_path(relative);
-        let bytes = std::fs::read(&path)
-            .unwrap_or_else(|error| panic!("Expected {} to be readable: {}", path.display(), error));
+        let bytes = std::fs::read(&path).unwrap_or_else(|error| {
+            panic!("Expected {} to be readable: {}", path.display(), error)
+        });
 
         assert!(
             bytes.starts_with(&[0xef, 0xbb, 0xbf]),
@@ -292,13 +287,15 @@ fn windows_distribution_docs_capture_submission_and_release_contract() {
             "GitHub Releases are the canonical binary source",
             "Winget",
             "Chocolatey",
-            "JamePrompt-1.0.0-x64.msi",
+            "JamePrompt-1.1.0-x64.msi",
+            "JamePrompt-1.1.0-x64-portable.zip",
             "SHA256SUMS",
             "winget validate",
             "Windows Sandbox",
             "choco pack",
             "choco install jame-prompt",
             "Do not announce Winget or Chocolatey availability until the package has been accepted by the target repository.",
+            "replace the checksum only after the MSI is published",
         ],
     );
 }

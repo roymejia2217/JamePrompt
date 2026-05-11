@@ -1,7 +1,7 @@
 use crate::migrations::MigrationManager;
 use crate::models::{Prompt, PromptFilter, PromptQuery, PromptSort};
 use crate::perf;
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection, Result, Transaction};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -60,6 +60,100 @@ impl Database {
 
     fn select_columns() -> &'static str {
         "id, name, content, hotkey, hotkey_enabled, favorite, created_at, updated_at, last_used_at, use_count"
+    }
+
+    fn insert_imported_with_conn(conn: &Connection, prompt: &Prompt) -> Result<String> {
+        let id = if prompt.id.trim().is_empty() {
+            Uuid::new_v4().to_string()
+        } else {
+            prompt.id.clone()
+        };
+
+        conn.execute(
+            "INSERT INTO prompts (
+                id, name, content, hotkey, hotkey_enabled, favorite,
+                created_at, updated_at, last_used_at, use_count
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6,
+                COALESCE(NULLIF(?7, ''), datetime('now')),
+                COALESCE(NULLIF(?8, ''), datetime('now')),
+                ?9, ?10
+            )",
+            params![
+                id,
+                prompt.name,
+                prompt.content,
+                prompt.hotkey,
+                prompt.hotkey_enabled,
+                prompt.favorite,
+                prompt.created_at,
+                prompt.updated_at,
+                prompt.last_used_at,
+                prompt.use_count,
+            ],
+        )?;
+        Ok(id)
+    }
+
+    fn update_imported_with_conn(
+        conn: &Connection,
+        existing_id: &str,
+        prompt: &Prompt,
+    ) -> Result<()> {
+        conn.execute(
+            "UPDATE prompts
+             SET name = ?1,
+                 content = ?2,
+                 hotkey = ?3,
+                 hotkey_enabled = ?4,
+                 favorite = ?5,
+                 created_at = COALESCE(NULLIF(?6, ''), created_at),
+                 updated_at = COALESCE(NULLIF(?7, ''), datetime('now')),
+                 last_used_at = ?8,
+                 use_count = ?9
+             WHERE id = ?10",
+            params![
+                prompt.name,
+                prompt.content,
+                prompt.hotkey,
+                prompt.hotkey_enabled,
+                prompt.favorite,
+                prompt.created_at,
+                prompt.updated_at,
+                prompt.last_used_at,
+                prompt.use_count,
+                existing_id,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn replace_all_imported_in_transaction(
+        tx: &Transaction<'_>,
+        prompts: &[Prompt],
+    ) -> Result<Vec<String>> {
+        tx.execute("DELETE FROM prompts", [])?;
+        let mut imported_ids = Vec::with_capacity(prompts.len());
+        for prompt in prompts {
+            imported_ids.push(Self::insert_imported_with_conn(tx, prompt)?);
+        }
+        Ok(imported_ids)
+    }
+
+    fn merge_imported_in_transaction(
+        tx: &Transaction<'_>,
+        inserts: &[Prompt],
+        overwrites: &[(String, Prompt)],
+    ) -> Result<Vec<String>> {
+        let mut imported_ids = Vec::with_capacity(inserts.len() + overwrites.len());
+        for prompt in inserts {
+            imported_ids.push(Self::insert_imported_with_conn(tx, prompt)?);
+        }
+        for (existing_id, prompt) in overwrites {
+            Self::update_imported_with_conn(tx, existing_id, prompt)?;
+            imported_ids.push(existing_id.clone());
+        }
+        Ok(imported_ids)
     }
 
     pub fn get_all(&self, search: &str) -> Result<Vec<Prompt>> {
@@ -179,10 +273,45 @@ impl Database {
         })
     }
 
+    pub fn insert_imported(&self, prompt: &Prompt) -> Result<String> {
+        perf::measure("db.insert_imported", || {
+            Self::insert_imported_with_conn(&self.conn, prompt)
+        })
+    }
+
+    pub fn replace_all_imported(&mut self, prompts: &[Prompt]) -> Result<Vec<String>> {
+        perf::measure("db.replace_all_imported", || {
+            let tx = self.conn.transaction()?;
+            let imported_ids = Self::replace_all_imported_in_transaction(&tx, prompts)?;
+            tx.commit()?;
+            Ok(imported_ids)
+        })
+    }
+
+    pub fn merge_imported(
+        &mut self,
+        inserts: &[Prompt],
+        overwrites: &[(String, Prompt)],
+    ) -> Result<Vec<String>> {
+        perf::measure("db.merge_imported", || {
+            let tx = self.conn.transaction()?;
+            let imported_ids = Self::merge_imported_in_transaction(&tx, inserts, overwrites)?;
+            tx.commit()?;
+            Ok(imported_ids)
+        })
+    }
+
     pub fn delete(&self, id: &str) -> Result<()> {
         perf::measure("db.delete", || {
             self.conn
                 .execute("DELETE FROM prompts WHERE id = ?1", params![id])?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_all(&self) -> Result<()> {
+        perf::measure("db.delete_all", || {
+            self.conn.execute("DELETE FROM prompts", [])?;
             Ok(())
         })
     }
@@ -194,6 +323,12 @@ impl Database {
                 params![prompt.name, prompt.content, prompt.hotkey, prompt.hotkey_enabled, prompt.id],
             )?;
             Ok(())
+        })
+    }
+
+    pub fn update_imported(&self, existing_id: &str, prompt: &Prompt) -> Result<()> {
+        perf::measure("db.update_imported", || {
+            Self::update_imported_with_conn(&self.conn, existing_id, prompt)
         })
     }
 
@@ -898,5 +1033,79 @@ mod tests {
 
         let prompts = db.get_all("").expect("Failed to get prompts");
         assert_eq!(prompts.len(), 2, "Should have 2 prompts after insert");
+    }
+
+    #[test]
+    fn test_insert_imported_preserves_metadata() {
+        let db = create_test_db();
+        let prompt = Prompt {
+            id: "11111111-1111-4111-8111-111111111111".to_string(),
+            name: "Imported".to_string(),
+            content: "Imported content".to_string(),
+            hotkey: Some("Ctrl+I".to_string()),
+            hotkey_enabled: false,
+            favorite: true,
+            created_at: "2026-05-11 10:00:00".to_string(),
+            updated_at: "2026-05-11 10:30:00".to_string(),
+            last_used_at: Some("2026-05-11 10:45:00".to_string()),
+            use_count: 9,
+        };
+
+        let id = db
+            .insert_imported(&prompt)
+            .expect("Imported insert should succeed");
+        let stored = db.get_by_id(&id).unwrap().unwrap();
+
+        assert_eq!(stored.id, prompt.id);
+        assert_eq!(stored.hotkey, prompt.hotkey);
+        assert!(!stored.hotkey_enabled);
+        assert!(stored.favorite);
+        assert_eq!(stored.created_at, prompt.created_at);
+        assert_eq!(stored.updated_at, prompt.updated_at);
+        assert_eq!(stored.last_used_at, prompt.last_used_at);
+        assert_eq!(stored.use_count, 9);
+    }
+
+    #[test]
+    fn test_replace_all_imported_replaces_existing_prompts() {
+        let mut db = create_test_db();
+        db.insert(&sample_prompt("Existing", "Existing content", None))
+            .expect("Existing prompt should insert");
+
+        db.replace_all_imported(&[
+            sample_prompt("Imported A", "A", None),
+            sample_prompt("Imported B", "B", None),
+        ])
+        .expect("Replace import should succeed");
+
+        let prompts = db.get_all("").expect("Prompts should load");
+        assert_eq!(prompts.len(), 2);
+        assert!(prompts
+            .iter()
+            .all(|prompt| prompt.name.starts_with("Imported")));
+    }
+
+    #[test]
+    fn test_merge_imported_overwrites_existing_prompt_by_id() {
+        let mut db = create_test_db();
+        let existing_id = db
+            .insert(&sample_prompt("Existing", "Old", None))
+            .expect("Existing prompt should insert");
+        let imported = Prompt {
+            name: "Existing".to_string(),
+            content: "New".to_string(),
+            favorite: true,
+            use_count: 4,
+            ..sample_prompt("Existing", "New", Some("Ctrl+N"))
+        };
+
+        db.merge_imported(&[], &[(existing_id.clone(), imported)])
+            .expect("Merge import should succeed");
+
+        let stored = db.get_by_id(&existing_id).unwrap().unwrap();
+        assert_eq!(stored.content, "New");
+        assert_eq!(stored.hotkey, Some("Ctrl+N".to_string()));
+        assert!(stored.favorite);
+        assert_eq!(stored.use_count, 4);
     }
 }

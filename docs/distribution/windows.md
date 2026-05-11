@@ -7,10 +7,10 @@ assets directly instead of repackaging binaries in this repository.
 
 ## Supported Artifacts
 
-For version `1.0.0`, the supported Windows artifacts are:
+For version `1.1.0`, the supported Windows artifacts are:
 
-- `JamePrompt-1.0.0-x64.msi`
-- `JamePrompt-1.0.0-x64-portable.zip`
+- `JamePrompt-1.1.0-x64.msi`
+- `JamePrompt-1.1.0-x64-portable.zip`
 - `SHA256SUMS`
 
 The MSI is the supported installer for package managers. The portable ZIP is
@@ -26,9 +26,10 @@ Release checklist:
 
 1. Verify that the MSI URL is reachable from the GitHub Release.
 2. Verify that `InstallerSha256` matches the MSI entry in `SHA256SUMS`.
-3. Run `winget validate` against the versioned manifest directory.
-4. Run the winget-pkgs Windows Sandbox validation script.
-5. Open the pull request against `microsoft/winget-pkgs`.
+3. Copy the latest accepted manifest directory, update it to the new release version, and replace the checksum only after the MSI is published.
+4. Run `winget validate` against the versioned manifest directory.
+5. Run the winget-pkgs Windows Sandbox validation script.
+6. Open the pull request against `microsoft/winget-pkgs`.
 
 ## Chocolatey
 
@@ -40,10 +41,11 @@ Release checklist:
 
 1. Verify that the MSI URL is reachable from the GitHub Release.
 2. Verify that the checksum in `chocolateyInstall.ps1` matches `SHA256SUMS`.
-3. Run `choco pack packaging/chocolatey/jame-prompt.nuspec`.
-4. Test the package locally with `choco install jame-prompt --source <local-package-directory>`.
-5. Test uninstall behavior in the same clean Windows environment.
-6. Push the package to the Chocolatey Community Repository after local install and uninstall are green.
+3. Update the package version, release notes URL, MSI URL, and checksum only after the MSI is published.
+4. Run `choco pack packaging/chocolatey/jame-prompt.nuspec`.
+5. Test the package locally with `choco install jame-prompt --source <local-package-directory>`.
+6. Test uninstall behavior in the same clean Windows environment.
+7. Push the package to the Chocolatey Community Repository after local install and uninstall are green.
 
 Do not announce Winget or Chocolatey availability until the package has been accepted by the target repository.
 

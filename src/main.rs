@@ -13,6 +13,7 @@ pub mod migrations;
 mod models;
 mod perf;
 mod perf_smoke;
+mod prompt_backup;
 pub mod prompt_repository;
 pub mod prompt_service;
 pub mod settings_service;

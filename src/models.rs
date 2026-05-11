@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 pub type PromptId = String;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Prompt {
     pub id: PromptId,
     pub name: String,

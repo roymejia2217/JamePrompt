@@ -1,6 +1,6 @@
 // Generated automatically by iced_lucide at build time.
 // Do not edit manually.
-// 531fcd034de63999710de0d9ad750b7c8166c048197c0f3c85ee4614efd39366
+// 1c81dba267aaf64546ae826659b3dd27f5247ec0925eff245a8a54bd54e51939
 use iced::widget::{text, Text};
 use iced::Font;
 
@@ -12,6 +12,7 @@ pub const FONT: &[u8] = include_bytes!("../fonts/lucide.ttf");
 pub const ALL_ICONS: &[(&str, &str)] = &[
     ("arrow_left", "\u{E048}"),
     ("copy", "\u{E09E}"),
+    ("download", "\u{E0B2}"),
     ("eraser", "\u{E28F}"),
     ("info", "\u{E0F9}"),
     ("keyboard", "\u{E284}"),
@@ -21,6 +22,7 @@ pub const ALL_ICONS: &[(&str, &str)] = &[
     ("settings", "\u{E154}"),
     ("star", "\u{E176}"),
     ("trash", "\u{E18E}"),
+    ("upload", "\u{E19E}"),
     ("x", "\u{E1B2}"),
 ];
 
@@ -30,6 +32,10 @@ pub fn arrow_left<'a>() -> Text<'a> {
 
 pub fn copy<'a>() -> Text<'a> {
     icon("\u{E09E}")
+}
+
+pub fn download<'a>() -> Text<'a> {
+    icon("\u{E0B2}")
 }
 
 pub fn eraser<'a>() -> Text<'a> {
@@ -66,6 +72,10 @@ pub fn star<'a>() -> Text<'a> {
 
 pub fn trash<'a>() -> Text<'a> {
     icon("\u{E18E}")
+}
+
+pub fn upload<'a>() -> Text<'a> {
+    icon("\u{E19E}")
 }
 
 pub fn x<'a>() -> Text<'a> {

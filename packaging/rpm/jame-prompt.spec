@@ -1,5 +1,5 @@
 Name:           jame-prompt
-Version:        1.0.0
+Version:        1.1.0
 Release:        1%{?dist}
 Summary:        JamePrompt lightweight local prompt manager
 
@@ -72,5 +72,9 @@ done
 %{_mandir}/man1/jame-prompt.1*
 
 %changelog
+* Mon May 11 2026 Roy Mejia <roymejia2217@gmail.com> - 1.1.0-1
+- Add JSON prompt import and export from settings.
+- Add empty-state guidance for new prompt libraries.
+
 * Sat May 02 2026 Roy Mejia <roymejia2217@gmail.com> - 1.0.0-1
 - Initial Fedora and RHEL RPM packaging recipe.

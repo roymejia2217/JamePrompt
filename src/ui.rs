@@ -42,7 +42,7 @@ const APP_LOGO_LIGHT_BYTES: &[u8] = include_bytes!(concat!(
 
 use std::cmp::Reverse;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -68,6 +68,10 @@ use crate::icon;
 use crate::launch::should_show_window_after_hidden_start;
 use crate::models::{Prompt, PromptFilter, PromptId, PromptQuery, PromptSort};
 use crate::perf;
+use crate::prompt_backup::{
+    plan_import_operations, DuplicateMode, ImportMode, ImportSummary, PromptBackup,
+    PromptImportPreview, PROMPT_BACKUP_DEFAULT_FILE_NAME, PROMPT_BACKUP_FILE_EXTENSION,
+};
 use crate::settings_service::SettingsService;
 use crate::tray::{pump_platform_events, TrayEvent, TrayHandle};
 
@@ -112,6 +116,14 @@ pub enum Message {
     SettingsThemeChanged(String),
     SettingsSave,
     SettingsSaved(Result<(), String>),
+    SettingsExportPressed,
+    SettingsExportFinished(Result<PathBuf, String>),
+    SettingsImportPressed,
+    SettingsImportLoaded(Result<PromptBackup, String>),
+    ImportModeSelected(ImportMode),
+    DuplicateModeSelected(DuplicateMode),
+    ImportConfirmPressed,
+    ImportCancelPressed,
     // Info modal
     InfoPressed,
     InfoDismissed,
@@ -193,6 +205,10 @@ pub struct JamePromptApp {
     show_settings: bool,
     show_info: bool,
     pending_delete_id: Option<PromptId>,
+    pending_import_backup: Option<PromptBackup>,
+    pending_import_preview: Option<PromptImportPreview>,
+    pending_import_mode: ImportMode,
+    pending_duplicate_mode: DuplicateMode,
     listening_for_hotkey: bool,
     main_window_id: Option<iced::window::Id>,
     content_width: f32,
@@ -268,6 +284,10 @@ impl Default for JamePromptApp {
             show_settings: false,
             show_info: false,
             pending_delete_id: None,
+            pending_import_backup: None,
+            pending_import_preview: None,
+            pending_import_mode: ImportMode::Merge,
+            pending_duplicate_mode: DuplicateMode::Skip,
             listening_for_hotkey: false,
             main_window_id: None,
             content_width: WINDOW_INITIAL_WIDTH,
@@ -303,6 +323,10 @@ impl JamePromptApp {
             show_settings: false,
             show_info: false,
             pending_delete_id: None,
+            pending_import_backup: None,
+            pending_import_preview: None,
+            pending_import_mode: ImportMode::Merge,
+            pending_duplicate_mode: DuplicateMode::Skip,
             listening_for_hotkey: false,
             main_window_id: None,
             content_width: WINDOW_INITIAL_WIDTH,
@@ -488,6 +512,146 @@ impl JamePromptApp {
             }
         }
     }
+
+    fn reload_prompt_cache_from_db(&mut self) -> Result<(), String> {
+        let prompts = self
+            .db
+            .get_all("")
+            .map_err(|error| format!("Database error: {}", error))?;
+        self.all_prompts = prompts.clone();
+        self.prompt_by_id = Self::build_prompt_index(&prompts);
+        self.prompts = self.visible_prompts_for_query(&self.current_query());
+        if let Some(selected_id) = &self.selected_id {
+            if !self.prompt_by_id.contains_key(selected_id) {
+                self.selected_id = None;
+            }
+        }
+        Ok(())
+    }
+
+    fn rebuild_hotkey_registrations(&mut self) {
+        if let Some(ref svc) = self.hotkey_service {
+            for &hotkey_id in self.hotkey_ids.keys() {
+                svc.unregister(hotkey_id);
+            }
+        }
+        self.hotkey_ids.clear();
+
+        if !self.settings.hotkeys_enabled {
+            return;
+        }
+
+        if let Some(ref svc) = self.hotkey_service {
+            for prompt in &self.all_prompts {
+                if prompt.hotkey_enabled {
+                    if let Some(ref hotkey) = prompt.hotkey {
+                        if let Some(hotkey_id) = svc.register(hotkey) {
+                            self.hotkey_ids.insert(hotkey_id, prompt.id.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn prompt_list_empty_message(&self) -> &'static str {
+        if self.all_prompts.is_empty() {
+            "Select a prompt from the list"
+        } else {
+            "No prompts match your filters"
+        }
+    }
+
+    fn apply_pending_import(&mut self) -> Result<ImportSummary, String> {
+        let backup = self
+            .pending_import_backup
+            .clone()
+            .ok_or_else(|| "No import is waiting for confirmation".to_string())?;
+        let operations = plan_import_operations(
+            &backup,
+            &self.all_prompts,
+            self.pending_import_mode,
+            self.pending_duplicate_mode,
+        )
+        .map_err(|error| error.to_string())?;
+
+        let summary = if matches!(self.pending_import_mode, ImportMode::ReplaceAll) {
+            let imported_ids = self
+                .db
+                .replace_all_imported(&operations.to_insert)
+                .map_err(|error| format!("Import failed: {}", error))?;
+            self.selected_id = imported_ids.first().cloned();
+            ImportSummary {
+                inserted: imported_ids.len(),
+                overwritten: 0,
+                skipped: 0,
+            }
+        } else {
+            let overwrites: Vec<(String, Prompt)> = operations
+                .to_overwrite
+                .iter()
+                .map(|overwrite| (overwrite.existing_id.clone(), overwrite.prompt.clone()))
+                .collect();
+            self.db
+                .merge_imported(&operations.to_insert, &overwrites)
+                .map_err(|error| format!("Import failed: {}", error))?;
+            ImportSummary {
+                inserted: operations.to_insert.len(),
+                overwritten: operations.to_overwrite.len(),
+                skipped: operations.skipped_names.len(),
+            }
+        };
+
+        self.reload_prompt_cache_from_db()?;
+        self.rebuild_hotkey_registrations();
+        self.pending_import_backup = None;
+        self.pending_import_preview = None;
+        Ok(summary)
+    }
+}
+
+fn normalized_json_path(mut path: PathBuf) -> PathBuf {
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(PROMPT_BACKUP_FILE_EXTENSION))
+    {
+        return path;
+    }
+    path.set_extension(PROMPT_BACKUP_FILE_EXTENSION);
+    path
+}
+
+async fn export_prompts_to_json_file(prompts: Vec<Prompt>) -> Result<PathBuf, String> {
+    let Some(handle) = rfd::AsyncFileDialog::new()
+        .add_filter("JamePrompt backup", &[PROMPT_BACKUP_FILE_EXTENSION])
+        .set_file_name(PROMPT_BACKUP_DEFAULT_FILE_NAME)
+        .save_file()
+        .await
+    else {
+        return Err("Export cancelled".to_string());
+    };
+
+    let path = normalized_json_path(handle.path().to_path_buf());
+    let backup = PromptBackup::new(APP_VERSION, prompts);
+    let json = backup.to_json().map_err(|error| error.to_string())?;
+    std::fs::write(&path, json).map_err(|error| format!("Export failed: {}", error))?;
+    Ok(path)
+}
+
+async fn import_prompts_from_json_file() -> Result<PromptBackup, String> {
+    let Some(handle) = rfd::AsyncFileDialog::new()
+        .add_filter("JamePrompt backup", &[PROMPT_BACKUP_FILE_EXTENSION])
+        .pick_file()
+        .await
+    else {
+        return Err("Import cancelled".to_string());
+    };
+
+    let path = handle.path().to_path_buf();
+    let json =
+        std::fs::read_to_string(&path).map_err(|error| format!("Import failed: {}", error))?;
+    PromptBackup::from_json(&json).map_err(|error| error.to_string())
 }
 
 #[cfg(not(test))]
@@ -570,6 +734,10 @@ impl JamePromptApp {
             show_settings: false,
             show_info: false,
             pending_delete_id: None,
+            pending_import_backup: None,
+            pending_import_preview: None,
+            pending_import_mode: ImportMode::Merge,
+            pending_duplicate_mode: DuplicateMode::Skip,
             listening_for_hotkey: false,
             main_window_id: None,
             content_width: WINDOW_INITIAL_WIDTH,
@@ -1005,6 +1173,76 @@ impl JamePromptApp {
                         }
                     };
                 }
+                Message::SettingsExportPressed => {
+                    self.status_message = "Exporting prompts".into();
+                    return Task::perform(
+                        export_prompts_to_json_file(self.all_prompts.clone()),
+                        Message::SettingsExportFinished,
+                    );
+                }
+                Message::SettingsExportFinished(result) => {
+                    self.status_message = match result {
+                        Ok(path) => format!("Prompts exported to {}", path.display()),
+                        Err(error) => error,
+                    };
+                }
+                Message::SettingsImportPressed => {
+                    self.status_message = "Choose a prompt backup".into();
+                    return Task::perform(
+                        import_prompts_from_json_file(),
+                        Message::SettingsImportLoaded,
+                    );
+                }
+                Message::SettingsImportLoaded(result) => match result {
+                    Ok(backup) => {
+                        match PromptImportPreview::from_backup(&backup, &self.all_prompts) {
+                            Ok(preview) => {
+                                self.pending_import_backup = Some(backup);
+                                self.pending_import_preview = Some(preview);
+                                self.pending_import_mode = ImportMode::Merge;
+                                self.pending_duplicate_mode = DuplicateMode::Skip;
+                                self.show_settings = false;
+                                self.status_message = "Review prompt import".into();
+                            }
+                            Err(error) => {
+                                self.status_message = format!("Import failed: {}", error);
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        self.status_message = error;
+                    }
+                },
+                Message::ImportModeSelected(mode) => {
+                    self.pending_import_mode = mode;
+                    self.status_message = match mode {
+                        ImportMode::Merge => "Import will merge with existing prompts".into(),
+                        ImportMode::ReplaceAll => "Import will replace all existing prompts".into(),
+                    };
+                }
+                Message::DuplicateModeSelected(mode) => {
+                    self.pending_duplicate_mode = mode;
+                    self.status_message = match mode {
+                        DuplicateMode::Skip => "Duplicate prompts will be skipped".into(),
+                        DuplicateMode::Overwrite => "Duplicate prompts will be overwritten".into(),
+                    };
+                }
+                Message::ImportConfirmPressed => match self.apply_pending_import() {
+                    Ok(summary) => {
+                        self.status_message = format!(
+                            "Import complete: {} added, {} overwritten, {} skipped",
+                            summary.inserted, summary.overwritten, summary.skipped
+                        );
+                    }
+                    Err(error) => {
+                        self.status_message = error;
+                    }
+                },
+                Message::ImportCancelPressed => {
+                    self.pending_import_backup = None;
+                    self.pending_import_preview = None;
+                    self.status_message = "Import cancelled".into();
+                }
                 Message::InfoPressed => {
                     self.show_info = true;
                     self.show_settings = false;
@@ -1077,6 +1315,9 @@ impl JamePromptApp {
                 stack!(main_content, modal).into()
             } else if self.pending_delete_id.is_some() {
                 let modal = self.view_delete_confirmation_modal();
+                stack!(main_content, modal).into()
+            } else if self.pending_import_backup.is_some() {
+                let modal = self.view_import_confirmation_modal();
                 stack!(main_content, modal).into()
             } else if self.show_settings {
                 let modal = self.view_settings_modal();
@@ -1200,6 +1441,23 @@ impl JamePromptApp {
                         .on_press(Message::PromptSelected(prompt.id.clone()))
                         .style(button::text)
                         .width(Length::Fill),
+                );
+            }
+            if self.prompts.is_empty() {
+                list_col = list_col.push(
+                    container(
+                        column![
+                            Space::with_height(Length::Fill),
+                            text(self.prompt_list_empty_message())
+                                .size(EMPTY_STATE_TEXT_SIZE)
+                                .color(self.theme().extended_palette().secondary.strong.color),
+                            Space::with_height(Length::Fill),
+                        ]
+                        .align_x(alignment::Alignment::Center)
+                        .width(Length::Fill),
+                    )
+                    .height(Length::Fill)
+                    .center_x(Length::Fill),
                 );
             }
 
@@ -1566,6 +1824,24 @@ impl JamePromptApp {
             .padding(CONTROL_PADDING)
             .style(pick_list_style);
 
+            let export_button = tooltip(
+                button(icon::download())
+                    .on_press(Message::SettingsExportPressed)
+                    .padding(CONTROL_PADDING)
+                    .style(button::secondary),
+                text("Export prompts"),
+                tooltip::Position::Top,
+            );
+
+            let import_button = tooltip(
+                button(icon::upload())
+                    .on_press(Message::SettingsImportPressed)
+                    .padding(CONTROL_PADDING)
+                    .style(button::secondary),
+                text("Import prompts"),
+                tooltip::Position::Top,
+            );
+
             let card = container(
                 column![
                     row![
@@ -1587,6 +1863,10 @@ impl JamePromptApp {
                         theme_picker,
                     ]
                     .align_y(alignment::Alignment::Center),
+                    Space::with_height(MODAL_SECTION_SPACING),
+                    row![import_button, export_button]
+                        .spacing(10)
+                        .align_y(alignment::Alignment::Center),
                     Space::with_height(20),
                     row![tooltip(
                         button(icon::save())
@@ -1651,6 +1931,145 @@ impl JamePromptApp {
             .width(modal_width_for_density(
                 self.current_density(),
                 MODAL_WIDTH_STANDARD,
+            ))
+            .style(modal_card_style);
+
+            let modal_overlay = container(
+                container(card)
+                    .padding(MAIN_PANEL_PADDING)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(modal_backdrop_style);
+
+            opaque(modal_overlay)
+        })
+    }
+
+    fn view_import_confirmation_modal(&self) -> Element<'_, Message> {
+        perf::measure("ui.view_import_confirmation_modal", || {
+            let preview = self
+                .pending_import_preview
+                .as_ref()
+                .expect("Import preview should exist when import modal is shown");
+            let duplicate_count = preview.duplicate_names.len();
+            let duplicate_text = if duplicate_count == 0 {
+                "No duplicate prompt names found".to_string()
+            } else {
+                format!(
+                    "{} duplicate prompt names found: {}",
+                    duplicate_count,
+                    preview.duplicate_names.join(", ")
+                )
+            };
+            let replace_warning: Element<'_, Message> =
+                if matches!(self.pending_import_mode, ImportMode::ReplaceAll) {
+                    text("This will remove all current prompts before importing the backup.")
+                        .size(MODAL_BODY_TEXT_SIZE)
+                        .color(self.theme().extended_palette().danger.strong.color)
+                        .into()
+                } else {
+                    Space::with_height(0).into()
+                };
+            let duplicate_controls: Element<'_, Message> =
+                if duplicate_count > 0 && matches!(self.pending_import_mode, ImportMode::Merge) {
+                    row![
+                        button(text("Skip duplicates"))
+                            .on_press(Message::DuplicateModeSelected(DuplicateMode::Skip))
+                            .padding(CONTROL_PADDING)
+                            .style(
+                                if matches!(self.pending_duplicate_mode, DuplicateMode::Skip) {
+                                    primary_button_style
+                                } else {
+                                    button::secondary
+                                }
+                            ),
+                        button(text("Overwrite duplicates"))
+                            .on_press(Message::DuplicateModeSelected(DuplicateMode::Overwrite))
+                            .padding(CONTROL_PADDING)
+                            .style(
+                                if matches!(self.pending_duplicate_mode, DuplicateMode::Overwrite) {
+                                    primary_button_style
+                                } else {
+                                    button::secondary
+                                }
+                            ),
+                    ]
+                    .spacing(10)
+                    .into()
+                } else {
+                    Space::with_height(0).into()
+                };
+
+            let confirm_label = if matches!(self.pending_import_mode, ImportMode::ReplaceAll) {
+                "Replace prompts"
+            } else {
+                "Import prompts"
+            };
+
+            let card = container(
+                column![
+                    row![
+                        text("Import prompts")
+                            .size(MODAL_TITLE_TEXT_SIZE)
+                            .width(Length::Fill),
+                        button(icon::x())
+                            .on_press(Message::ImportCancelPressed)
+                            .style(button::text)
+                            .padding(4),
+                    ],
+                    Space::with_height(15),
+                    text(format!(
+                        "{} prompts found in the backup",
+                        preview.imported_count
+                    ))
+                    .size(MODAL_BODY_TEXT_SIZE),
+                    text(duplicate_text).size(MODAL_BODY_TEXT_SIZE),
+                    Space::with_height(MODAL_SECTION_SPACING),
+                    row![
+                        button(text("Merge"))
+                            .on_press(Message::ImportModeSelected(ImportMode::Merge))
+                            .padding(CONTROL_PADDING)
+                            .style(if matches!(self.pending_import_mode, ImportMode::Merge) {
+                                primary_button_style
+                            } else {
+                                button::secondary
+                            }),
+                        button(text("Replace all"))
+                            .on_press(Message::ImportModeSelected(ImportMode::ReplaceAll))
+                            .padding(CONTROL_PADDING)
+                            .style(
+                                if matches!(self.pending_import_mode, ImportMode::ReplaceAll) {
+                                    primary_button_style
+                                } else {
+                                    button::secondary
+                                }
+                            ),
+                    ]
+                    .spacing(10),
+                    duplicate_controls,
+                    replace_warning,
+                    Space::with_height(20),
+                    row![
+                        button(text("Cancel"))
+                            .on_press(Message::ImportCancelPressed)
+                            .padding(CONTROL_PADDING)
+                            .style(button::secondary),
+                        button(text(confirm_label))
+                            .on_press(Message::ImportConfirmPressed)
+                            .padding(CONTROL_PADDING)
+                            .style(primary_button_style),
+                    ]
+                    .spacing(10),
+                ]
+                .spacing(MODAL_SECTION_SPACING)
+                .padding(20),
+            )
+            .width(modal_width_for_density(
+                self.current_density(),
+                MODAL_WIDTH_WIDE,
             ))
             .style(modal_card_style);
 
@@ -2952,5 +3371,136 @@ mod tests {
         assert!(app.tray.is_none());
         assert!(app.hotkey_service.is_none());
         assert!(app.all_prompts.is_empty());
+    }
+
+    #[test]
+    fn left_prompt_list_empty_state_matches_detail_placeholder_on_initial_state() {
+        let app = JamePromptApp::with_database(Database::in_memory().unwrap());
+
+        assert_eq!(
+            app.prompt_list_empty_message(),
+            "Select a prompt from the list"
+        );
+    }
+
+    #[test]
+    fn left_prompt_list_empty_state_mentions_filters_when_prompts_exist() {
+        let db = Database::in_memory().expect("Failed to create in-memory database");
+        db.insert(&Prompt {
+            id: String::new(),
+            name: "Alpha".to_string(),
+            content: "Content".to_string(),
+            hotkey: None,
+            hotkey_enabled: true,
+            favorite: false,
+            created_at: String::new(),
+            updated_at: String::new(),
+            last_used_at: None,
+            use_count: 0,
+            ..Prompt::default()
+        })
+        .expect("Insert should succeed");
+        let mut app = JamePromptApp::with_database(db);
+        let _ = app.update(Message::SearchChanged("missing".to_string()));
+
+        assert_eq!(
+            app.prompt_list_empty_message(),
+            "No prompts match your filters"
+        );
+    }
+
+    #[test]
+    fn import_cancel_preserves_existing_prompts() {
+        let db = Database::in_memory().expect("Failed to create in-memory database");
+        db.insert(&Prompt {
+            id: String::new(),
+            name: "Existing".to_string(),
+            content: "Content".to_string(),
+            hotkey: None,
+            hotkey_enabled: true,
+            favorite: false,
+            created_at: String::new(),
+            updated_at: String::new(),
+            last_used_at: None,
+            use_count: 0,
+            ..Prompt::default()
+        })
+        .expect("Insert should succeed");
+        let mut app = JamePromptApp::with_database(db);
+        app.pending_import_backup = Some(PromptBackup::new(
+            "1.1.0",
+            vec![Prompt {
+                id: String::new(),
+                name: "Imported".to_string(),
+                content: "Imported content".to_string(),
+                hotkey: None,
+                hotkey_enabled: true,
+                favorite: false,
+                created_at: String::new(),
+                updated_at: String::new(),
+                last_used_at: None,
+                use_count: 0,
+                ..Prompt::default()
+            }],
+        ));
+        app.pending_import_preview = Some(PromptImportPreview {
+            imported_count: 1,
+            duplicate_names: Vec::new(),
+        });
+
+        let _ = app.update(Message::ImportCancelPressed);
+
+        assert!(app.pending_import_backup.is_none());
+        assert_eq!(app.all_prompts.len(), 1);
+        assert_eq!(app.all_prompts[0].name, "Existing");
+    }
+
+    #[test]
+    fn import_confirm_merge_refreshes_prompt_cache() {
+        let db = Database::in_memory().expect("Failed to create in-memory database");
+        db.insert(&Prompt {
+            id: String::new(),
+            name: "Existing".to_string(),
+            content: "Content".to_string(),
+            hotkey: None,
+            hotkey_enabled: true,
+            favorite: false,
+            created_at: String::new(),
+            updated_at: String::new(),
+            last_used_at: None,
+            use_count: 0,
+            ..Prompt::default()
+        })
+        .expect("Insert should succeed");
+        let mut app = JamePromptApp::with_database(db);
+        app.pending_import_backup = Some(PromptBackup::new(
+            "1.1.0",
+            vec![Prompt {
+                id: "99999999-9999-4999-8999-999999999999".to_string(),
+                name: "Imported".to_string(),
+                content: "Imported content".to_string(),
+                hotkey: None,
+                hotkey_enabled: true,
+                favorite: true,
+                created_at: "2026-05-11 10:00:00".to_string(),
+                updated_at: "2026-05-11 10:30:00".to_string(),
+                last_used_at: None,
+                use_count: 3,
+            }],
+        ));
+        app.pending_import_preview = Some(PromptImportPreview {
+            imported_count: 1,
+            duplicate_names: Vec::new(),
+        });
+
+        let _ = app.update(Message::ImportConfirmPressed);
+
+        assert_eq!(app.all_prompts.len(), 2);
+        let imported = app
+            .prompt_cloned_by_id("99999999-9999-4999-8999-999999999999")
+            .expect("Imported prompt should be cached");
+        assert_eq!(imported.name, "Imported");
+        assert!(imported.favorite);
+        assert_eq!(imported.use_count, 3);
     }
 }
