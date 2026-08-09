@@ -25,24 +25,29 @@ mod window_lifecycle;
 include!(concat!(env!("OUT_DIR"), "/image.rs"));
 
 use config::APP_NAME;
-use iced::Task;
+use iced::{window, Element, Task, Theme};
 use launch::{should_run_ui_smoke_from_args, should_start_minimized};
 use perf::measure;
 use ui::{JamePromptApp, Message};
 use window_lifecycle::WindowLifecycleAction;
 
-fn update_application(
-    app: &mut JamePromptApp,
-    message: Message,
-    smoke_mode: bool,
-) -> Task<Message> {
-    match window_lifecycle::classify(&message, smoke_mode) {
+fn update_application(app: &mut JamePromptApp, message: Message) -> Task<Message> {
+    match window_lifecycle::classify(&message) {
         WindowLifecycleAction::Delegate => app.update(message),
         WindowLifecycleAction::Close(id) => window_lifecycle::close(id),
-        WindowLifecycleAction::Open => window_lifecycle::open()
-            .map(|id| Message::ShowWindow(Some(id))),
+        WindowLifecycleAction::Open => {
+            window_lifecycle::open().map(|id| Message::ShowWindow(Some(id)))
+        }
         WindowLifecycleAction::Restore(id) => window_lifecycle::restore(id),
     }
+}
+
+fn view_application(app: &JamePromptApp, _window_id: window::Id) -> Element<'_, Message> {
+    app.view()
+}
+
+fn theme_application(app: &JamePromptApp, _window_id: window::Id) -> Theme {
+    app.theme()
 }
 
 fn initial_window_task(start_minimized: bool) -> Task<Message> {
@@ -76,22 +81,18 @@ fn main() -> iced::Result {
         }
     });
 
-    iced::daemon(
-        APP_NAME,
-        move |app, message| update_application(app, message, ui_smoke),
-        |app: &JamePromptApp, _window_id| app.view(),
-    )
-    .theme(|app, _window_id| app.theme())
-    .font(icon::FONT)
-    .subscription(JamePromptApp::subscription)
-    .run_with(move || {
-        measure("startup.app_state", || {
-            let (app, startup_task) =
-                JamePromptApp::new_with_hidden_start(start_minimized, ui_smoke);
-            let window_task = initial_window_task(start_minimized);
-            (app, Task::batch([startup_task, window_task]))
+    iced::daemon(APP_NAME, update_application, view_application)
+        .theme(theme_application)
+        .font(icon::FONT)
+        .subscription(JamePromptApp::subscription)
+        .run_with(move || {
+            measure("startup.app_state", || {
+                let (app, startup_task) =
+                    JamePromptApp::new_with_hidden_start(start_minimized, ui_smoke);
+                let window_task = initial_window_task(start_minimized);
+                (app, Task::batch([startup_task, window_task]))
+            })
         })
-    })
 }
 
 #[cfg(test)]
