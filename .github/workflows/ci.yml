@@ -34,6 +34,9 @@ jobs:
       - name: Validate release version contract
         run: python3 scripts/prepare_release_version.py --self-test
 
+      - name: Validate release staging contract
+        run: python3 scripts/stage_release_assets.py --self-test
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 

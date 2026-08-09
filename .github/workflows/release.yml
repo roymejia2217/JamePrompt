@@ -413,7 +413,14 @@ jobs:
             exit 1
           fi
 
-          mapfile -t RELEASE_FILES < <(find release-artifacts -type f -print | sort)
+          python3 scripts/stage_release_assets.py \
+            --tag "$TAG_NAME" \
+            release-artifacts \
+            release-stage
+          rm -r release-artifacts
+          mv release-stage release-artifacts
+
+          mapfile -t RELEASE_FILES < <(find release-artifacts -maxdepth 1 -type f -print | sort)
           if [ "${#RELEASE_FILES[@]}" -eq 0 ]; then
             echo "No release artifact files found."
             exit 1
