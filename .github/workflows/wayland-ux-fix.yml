@@ -1,0 +1,59 @@
+name: Wayland UX Fix Validation
+
+on:
+  push:
+    branches:
+      - "automation/wayland-shortcut-ux-fix"
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-materialize:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: automation/wayland-shortcut-ux-fix
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libx11-dev \
+            libxtst-dev \
+            libxkbcommon-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            libxdo-dev \
+            python3-pil \
+            desktop-file-utils
+
+      - name: Apply surgical patch
+        run: python3 scripts/apply_wayland_shortcut_ux_fix.py
+
+      - name: Format
+        run: cargo fmt --all
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Validate diff
+        run: git diff --check
+
+      - name: Materialize validated source commit
+        run: |
+          git rm .github/workflows/wayland-ux-fix.yml
+          git rm scripts/apply_wayland_shortcut_ux_fix.py
+          git diff --check
+          git config user.name "Roy Mejía"
+          git config user.email "54757516+roymejia2217@users.noreply.github.com"
+          git add src/main.rs src/ui.rs src/hotkeys.rs src/hotkeys/portal.rs
+          git commit -m "fix(linux): improve Wayland shortcut UX"
+          git push origin HEAD:automation/wayland-shortcut-ux-fix
