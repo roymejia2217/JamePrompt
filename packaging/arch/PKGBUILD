@@ -7,6 +7,7 @@ pkgdesc='JamePrompt lightweight local prompt manager'
 arch=('x86_64')
 url='https://github.com/roymejia2217/JamePrompt'
 license=('MIT')
+options=(!debug)
 depends=(
   'gtk3'
   'libappindicator-gtk3'
