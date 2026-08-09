@@ -385,6 +385,9 @@ jobs:
       contents: write
 
     steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@v6
+
       - name: Download artifacts from current run
         if: ${{ inputs.publish_run_id == '' }}
         uses: actions/download-artifact@v8
