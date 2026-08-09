@@ -32,6 +32,9 @@ jobs:
             python3-pil \
             desktop-file-utils
 
+      - name: Harden patch precondition
+        run: python3 scripts/harden_wayland_patch.py
+
       - name: Apply surgical patch
         run: python3 scripts/apply_wayland_shortcut_ux_fix.py
 
@@ -51,6 +54,7 @@ jobs:
         run: |
           git rm .github/workflows/wayland-ux-fix.yml
           git rm scripts/apply_wayland_shortcut_ux_fix.py
+          git rm scripts/harden_wayland_patch.py
           git diff --check
           git config user.name "Roy Mejía"
           git config user.email "54757516+roymejia2217@users.noreply.github.com"
