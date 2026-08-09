@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install system dependencies
         run: |
@@ -31,6 +31,11 @@ jobs:
             python3-pil \
             desktop-file-utils
 
+      - name: Validate release version contract
+        run: python3 scripts/prepare_release_version.py --self-test
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
       - name: Run tests
         run: cargo test --locked
-

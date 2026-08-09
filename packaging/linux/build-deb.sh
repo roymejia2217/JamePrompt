@@ -5,12 +5,16 @@ APP_ID="jame-prompt"
 DESKTOP_APP_ID="io.github.roymejia2217.JamePrompt"
 APP_NAME="JamePrompt"
 MAINTAINER="Roy Mejia <roymejia2217@gmail.com>"
-VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+UPSTREAM_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+VERSION="${UPSTREAM_VERSION%%-*}"
+if [ "$UPSTREAM_VERSION" != "$VERSION" ]; then
+    VERSION="${VERSION}~${UPSTREAM_VERSION#*-}"
+fi
 ARCH="$(dpkg --print-architecture)"
 ROOT="target/debian/${APP_ID}_${VERSION}_${ARCH}"
 DEB="target/debian/${APP_ID}_${VERSION}_${ARCH}.deb"
 
-if [ -z "$VERSION" ]; then
+if [ -z "$UPSTREAM_VERSION" ]; then
     echo "Unable to read package version from Cargo.toml" >&2
     exit 1
 fi

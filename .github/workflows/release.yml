@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - "release-candidate/v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -18,6 +20,9 @@ on:
 permissions:
   contents: read
 
+env:
+  RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
 jobs:
   deb:
     runs-on: ubuntu-latest
@@ -25,7 +30,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Prepare release version
+        run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --apply
 
       - name: Install Debian packaging dependencies
         run: |
@@ -47,7 +55,7 @@ jobs:
         run: packaging/linux/build-deb.sh
 
       - name: Upload Debian package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: deb-package
           path: target/debian/*.deb
@@ -59,7 +67,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Prepare release version
+        run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --apply
 
       - name: Build Arch package in Arch Linux container
         run: |
@@ -104,7 +115,7 @@ jobs:
             '
 
       - name: Upload Arch package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: arch-package
           path: packaging/arch/*.pkg.tar.zst
@@ -116,7 +127,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Prepare release version
+        run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --apply
 
       - name: Build RPM package in Fedora container
         run: |
@@ -125,19 +139,24 @@ jobs:
             -w /workspace \
             fedora:40 \
             bash -lc '
+              set -euo pipefail
               dnf -y update
               dnf -y install git curl rpm-build cargo rust desktop-file-utils gtk3-devel libX11-devel libXtst-devel libxkbcommon-devel libxdo-devel
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
               source /root/.cargo/env
               rustup toolchain install stable
               rustup default stable
-              VERSION="$(sed -n '\''s/^version = "\(.*\)"/\1/p'\'' Cargo.toml | head -n 1)"
+              RPM_VERSION="$(sed -n '\''s/^Version:[[:space:]]*//p'\'' packaging/rpm/jame-prompt.spec | head -n 1)"
+              if [ -z "$RPM_VERSION" ]; then
+                echo "Unable to read RPM version" >&2
+                exit 1
+              fi
               RPM_TOPDIR="$PWD/target/rpmbuild"
               mkdir -p "$RPM_TOPDIR"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
-              tar -czf "$RPM_TOPDIR/SOURCES/jame-prompt-${VERSION}.tar.gz" \
+              tar -czf "$RPM_TOPDIR/SOURCES/jame-prompt-${RPM_VERSION}.tar.gz" \
                 --exclude="./target" \
                 --exclude="./.git" \
-                --transform="s#^\./#jame-prompt-${VERSION}/#" \
+                --transform="s#^\./#jame-prompt-${RPM_VERSION}/#" \
                 -C "$PWD" .
               rpmbuild \
                 --define "_topdir $RPM_TOPDIR" \
@@ -146,7 +165,7 @@ jobs:
             '
 
       - name: Upload RPM package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rpm-package
           path: target/rpmbuild/RPMS/**/*.rpm
@@ -158,7 +177,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Prepare release version
+        run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --apply
 
       - name: Install AppImage build dependencies
         run: |
@@ -196,7 +218,7 @@ jobs:
         run: packaging/appimage/build-appimage.sh
 
       - name: Upload AppImage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: appimage-package
           path: dist/*.AppImage
@@ -213,7 +235,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Prepare release version
+        shell: pwsh
+        run: |
+          python scripts/prepare_release_version.py --tag "$env:RELEASE_REF" --apply
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          $isPrerelease = $version.Contains("-").ToString().ToLowerInvariant()
+          "JAMEPROMPT_IS_PRERELEASE=$isPrerelease" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -221,9 +251,11 @@ jobs:
           targets: ${{ env.WINDOWS_TARGET }}
 
       - name: Install WiX Toolset
+        if: env.JAMEPROMPT_IS_PRERELEASE != 'true'
         run: choco install wixtoolset --no-progress -y
 
       - name: Install cargo-wix
+        if: env.JAMEPROMPT_IS_PRERELEASE != 'true'
         run: cargo install cargo-wix --locked
 
       - name: Build Windows binaries
@@ -304,20 +336,22 @@ jobs:
           Compress-Archive -Path "$portableRoot/*" -DestinationPath "target/JamePrompt-$version-x64-portable.zip" -Force
 
       - name: Build MSI
+        if: env.JAMEPROMPT_IS_PRERELEASE != 'true'
         shell: pwsh
         run: |
           $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
           cargo wix --no-build --target x86_64-pc-windows-msvc --target-bin-dir "target/$env:WINDOWS_TARGET/release" --output "target/wix/JamePrompt-$version-x64.msi" --nocapture
 
       - name: Upload portable archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-portable
           path: target/JamePrompt-*-x64-portable.zip
           if-no-files-found: error
 
       - name: Upload MSI
-        uses: actions/upload-artifact@v4
+        if: env.JAMEPROMPT_IS_PRERELEASE != 'true'
+        uses: actions/upload-artifact@v7
         with:
           name: windows-msi
           path: target/wix/*.msi
@@ -353,14 +387,14 @@ jobs:
     steps:
       - name: Download artifacts from current run
         if: ${{ inputs.publish_run_id == '' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-artifacts
           merge-multiple: true
 
       - name: Download artifacts from existing run
         if: ${{ inputs.publish_run_id != '' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-artifacts
           merge-multiple: true
@@ -372,7 +406,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG_NAME="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          set -euo pipefail
+          TAG_NAME="${RELEASE_REF#release-candidate/}"
+          if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $TAG_NAME" >&2
+            exit 1
+          fi
+
           mapfile -t RELEASE_FILES < <(find release-artifacts -type f -print | sort)
           if [ "${#RELEASE_FILES[@]}" -eq 0 ]; then
             echo "No release artifact files found."
@@ -385,6 +425,13 @@ jobs:
           )
           RELEASE_FILES+=("release-artifacts/SHA256SUMS")
 
+          PRERELEASE_ARGS=()
+          NOTES="Automated release for $TAG_NAME"
+          if [[ "$TAG_NAME" == *-* ]]; then
+            PRERELEASE_ARGS+=(--prerelease)
+            NOTES=$'Wayland support release candidate.\n\nIncludes XDG GlobalShortcuts, permissioned RemoteDesktop auto-paste, corrected tray/window lifecycle, and Linux portal-compatible desktop identity.\n\nThis prerelease is intended for validation before promotion to a stable release.'
+          fi
+
           if gh release view "$TAG_NAME" --repo "${{ github.repository }}" > /dev/null 2>&1; then
             gh release upload "$TAG_NAME" "${RELEASE_FILES[@]}" \
               --repo "${{ github.repository }}" \
@@ -392,6 +439,8 @@ jobs:
           else
             gh release create "$TAG_NAME" "${RELEASE_FILES[@]}" \
               --repo "${{ github.repository }}" \
+              --target "$GITHUB_SHA" \
               --title "$TAG_NAME" \
-              --notes "Automated release for $TAG_NAME"
+              --notes "$NOTES" \
+              "${PRERELEASE_ARGS[@]}"
           fi
