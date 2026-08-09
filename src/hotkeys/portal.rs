@@ -73,7 +73,7 @@ impl PortalHotkeyService {
         key_str: &str,
     ) -> Option<u32> {
         let preferred_trigger = to_portal_trigger(key_str)?;
-        let shortcut_id = portal_shortcut_id(prompt_id, prompt_name, key_str)?;
+        let shortcut_id = portal_shortcut_id(prompt_id)?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let binding = PortalBinding {
             shortcut_id,
@@ -516,14 +516,12 @@ fn stable_hash(seed: u64, values: &[&str]) -> u64 {
     hash
 }
 
-fn portal_shortcut_id(prompt_id: &str, prompt_name: &str, hotkey: &str) -> Option<String> {
+fn portal_shortcut_id(prompt_id: &str) -> Option<String> {
     let prompt_id = prompt_id.trim();
     if prompt_id.is_empty() {
         return None;
     }
-    let prompt_name = prompt_name.trim();
-    let hotkey = hotkey.trim();
-    let values = [prompt_id, prompt_name, hotkey];
+    let values = [prompt_id];
     let primary = stable_hash(0xcbf2_9ce4_8422_2325, &values);
     let secondary = stable_hash(0x8422_2325_cbf2_9ce4, &values);
     Some(format!("prompt_{primary:016x}{secondary:016x}"))
@@ -629,24 +627,11 @@ mod tests {
     }
 
     #[test]
-    fn shortcut_id_is_stable_until_prompt_binding_changes() {
-        let original = portal_shortcut_id("prompt-123", "continuar-proyecto", "Shift+Alt+C");
-        assert_eq!(
-            original,
-            portal_shortcut_id("prompt-123", "continuar-proyecto", "Shift+Alt+C")
-        );
-        assert_ne!(
-            original,
-            portal_shortcut_id("prompt-123", "continuar-proyecto", "Shift+Alt+V")
-        );
-        assert_ne!(
-            original,
-            portal_shortcut_id("prompt-123", "continuar proyecto", "Shift+Alt+C")
-        );
-        assert_ne!(
-            original,
-            portal_shortcut_id("prompt-456", "continuar-proyecto", "Shift+Alt+C")
-        );
+    fn shortcut_id_is_stable_for_prompt_identity() {
+        let original = portal_shortcut_id("prompt-123");
+        assert_eq!(original, portal_shortcut_id("prompt-123"));
+        assert_eq!(original, portal_shortcut_id("  prompt-123  "));
+        assert_ne!(original, portal_shortcut_id("prompt-456"));
     }
 
     #[test]
@@ -658,7 +643,8 @@ mod tests {
 
     #[test]
     fn portal_shortcut_requires_persistent_prompt_identity() {
-        assert_eq!(portal_shortcut_id("", "Prompt", "Ctrl+P"), None);
+        assert_eq!(portal_shortcut_id(""), None);
+        assert_eq!(portal_shortcut_id("   "), None);
     }
 
     #[test]
