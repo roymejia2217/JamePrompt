@@ -35,6 +35,7 @@ where
         .any(|arg| arg.as_ref() == OsStr::new(UI_SMOKE_ARG))
 }
 
+#[cfg(test)]
 pub(crate) fn initial_window_visible(start_minimized: bool) -> bool {
     !start_minimized
 }

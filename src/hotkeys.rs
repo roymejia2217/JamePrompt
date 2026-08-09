@@ -7,6 +7,8 @@ use crate::platform::HotkeyBackendKind;
 mod native;
 #[cfg(target_os = "linux")]
 mod portal;
+#[cfg(target_os = "linux")]
+mod remote_desktop;
 
 /// Formats a keyboard key and modifiers into JamePrompt's portable hotkey notation.
 pub fn format_hotkey(key: &Key, modifiers: Modifiers) -> Option<String> {
@@ -149,14 +151,14 @@ impl HotkeyService {
     }
 }
 
-/// Injects Ctrl+V only on platforms where native synthetic input is supported.
-/// Wayland uses a separate permissioned input backend and must never fall back
-/// to X11-style rdev injection.
+/// Injects Ctrl+V into the previously active application using the platform
+/// backend. Native platforms keep the existing rdev path. Wayland uses the
+/// permissioned XDG RemoteDesktop portal and never falls back to X11 injection.
 pub fn paste_to_active_window() {
     perf::measure("hotkeys.paste_to_active_window_spawn", || {
         #[cfg(target_os = "linux")]
         if crate::platform::display_server() == crate::platform::DisplayServer::Wayland {
-            tracing::debug!("Native paste injection is disabled on Wayland");
+            remote_desktop::paste_to_active_window();
             return;
         }
         native::paste_to_active_window();

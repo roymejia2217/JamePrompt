@@ -25,12 +25,15 @@ mod window_lifecycle;
 // Include pre-decoded RGBA icon data (generated at compile time by buildtime_png)
 include!(concat!(env!("OUT_DIR"), "/image.rs"));
 
-use config::APP_NAME;
 use iced::{window, Element, Task, Theme};
 use launch::{should_run_ui_smoke_from_args, should_start_minimized};
 use perf::measure;
 use ui::{JamePromptApp, Message};
 use window_lifecycle::WindowLifecycleAction;
+
+fn title_application(app: &JamePromptApp, _window_id: window::Id) -> String {
+    app.title()
+}
 
 fn update_application(app: &mut JamePromptApp, message: Message) -> Task<Message> {
     match window_lifecycle::classify(&message) {
@@ -74,7 +77,6 @@ fn main() -> iced::Result {
     });
     let start_minimized = measure("startup.parse_args", should_start_minimized);
 
-    // Initialize GTK for tray icon on Linux
     #[cfg(target_os = "linux")]
     measure("startup.gtk_init", || {
         if let Err(error) = gtk::init() {
@@ -82,7 +84,7 @@ fn main() -> iced::Result {
         }
     });
 
-    iced::daemon(APP_NAME, update_application, view_application)
+    iced::daemon(title_application, update_application, view_application)
         .theme(theme_application)
         .font(icon::FONT)
         .subscription(JamePromptApp::subscription)
