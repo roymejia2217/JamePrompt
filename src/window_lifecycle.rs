@@ -17,9 +17,9 @@ pub(crate) enum WindowLifecycleAction {
     Restore(window::Id),
 }
 
-pub(crate) fn classify(message: &Message, smoke_mode: bool) -> WindowLifecycleAction {
+pub(crate) fn classify(message: &Message) -> WindowLifecycleAction {
     match message {
-        Message::CloseRequested(id) if !smoke_mode => WindowLifecycleAction::Close(*id),
+        Message::CloseRequested(id) => WindowLifecycleAction::Close(*id),
         Message::ShowWindow(None) => WindowLifecycleAction::Open,
         Message::ShowWindow(Some(id)) => WindowLifecycleAction::Restore(*id),
         _ => WindowLifecycleAction::Delegate,
@@ -69,29 +69,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn close_request_closes_window_during_normal_runtime() {
+    fn close_request_closes_the_window() {
         let id = window::Id::unique();
 
         assert_eq!(
-            classify(&Message::CloseRequested(id), false),
+            classify(&Message::CloseRequested(id)),
             WindowLifecycleAction::Close(id)
-        );
-    }
-
-    #[test]
-    fn close_request_is_delegated_during_smoke_runtime() {
-        let id = window::Id::unique();
-
-        assert_eq!(
-            classify(&Message::CloseRequested(id), true),
-            WindowLifecycleAction::Delegate
         );
     }
 
     #[test]
     fn missing_window_is_recreated_from_tray_request() {
         assert_eq!(
-            classify(&Message::ShowWindow(None), false),
+            classify(&Message::ShowWindow(None)),
             WindowLifecycleAction::Open
         );
     }
@@ -101,7 +91,7 @@ mod tests {
         let id = window::Id::unique();
 
         assert_eq!(
-            classify(&Message::ShowWindow(Some(id)), false),
+            classify(&Message::ShowWindow(Some(id))),
             WindowLifecycleAction::Restore(id)
         );
     }
@@ -109,7 +99,7 @@ mod tests {
     #[test]
     fn unrelated_messages_stay_owned_by_the_application() {
         assert_eq!(
-            classify(&Message::SearchChanged("test".into()), false),
+            classify(&Message::SearchChanged("test".into())),
             WindowLifecycleAction::Delegate
         );
     }
