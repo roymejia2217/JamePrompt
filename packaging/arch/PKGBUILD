@@ -20,6 +20,7 @@ depends=(
   'hicolor-icon-theme'
   'sqlite'
   'desktop-file-utils'
+  'xdg-desktop-portal'
 )
 makedepends=(
   'cargo'
@@ -29,6 +30,7 @@ makedepends=(
 source=()
 sha256sums=()
 _source_root="${startdir}/../.."
+_desktop_app_id='io.github.roymejia2217.JamePrompt'
 
 build() {
   cd "${_source_root}"
@@ -48,7 +50,7 @@ package() {
   cd "${_source_root}"
 
   install -Dm755 "target/release/${pkgname}" "${pkgdir}/usr/bin/${pkgname}"
-  install -Dm644 "packaging/linux/jame-prompt.desktop" "${pkgdir}/usr/share/applications/${pkgname}.desktop"
+  install -Dm644 "packaging/linux/jame-prompt.desktop" "${pkgdir}/usr/share/applications/${_desktop_app_id}.desktop"
   install -Dm644 "packaging/linux/jame-prompt.1" "${pkgdir}/usr/share/man/man1/${pkgname}.1"
   install -Dm644 "LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
   install -Dm644 "packaging/linux/copyright" "${pkgdir}/usr/share/doc/${pkgname}/copyright"

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 pub const APP_NAME: &str = "JamePrompt";
 pub const APP_ID: &str = "jame-prompt";
+pub const LINUX_DESKTOP_APP_ID: &str = "io.github.roymejia2217.JamePrompt";
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const APP_DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
 pub const OLD_PROJECT_QUALIFIER: &str = "prompt-manager";
@@ -317,6 +318,13 @@ mod tests {
     #[test]
     fn test_app_name_constant() {
         assert_eq!(APP_NAME, "JamePrompt");
+    }
+
+    #[test]
+    fn test_linux_desktop_app_id_is_reverse_dns() {
+        assert_eq!(LINUX_DESKTOP_APP_ID, "io.github.roymejia2217.JamePrompt");
+        assert!(LINUX_DESKTOP_APP_ID.contains('.'));
+        assert_ne!(LINUX_DESKTOP_APP_ID, APP_ID);
     }
 
     #[test]

@@ -10,6 +10,7 @@ Source0:        %{name}-%{version}.tar.gz
 # Fedora's automatic debugsource generation can produce an empty
 # debugsourcefiles.list for this Rust GUI package in containerized builds.
 %global debug_package %{nil}
+%global desktop_app_id io.github.roymejia2217.JamePrompt
 
 BuildRequires:  cargo
 BuildRequires:  rust
@@ -31,6 +32,7 @@ Requires:       fontconfig
 Requires:       freetype
 Requires:       gdk-pixbuf2
 Requires:       hicolor-icon-theme
+Requires:       xdg-desktop-portal
 
 %description
 JamePrompt is a lightweight local prompt manager with SQLite storage, global
@@ -51,9 +53,8 @@ desktop-file-validate packaging/linux/jame-prompt.desktop
 
 %install
 install -Dm755 target/release/%{name} %{buildroot}%{_bindir}/%{name}
-desktop-file-install \
-  --dir=%{buildroot}%{_datadir}/applications \
-  packaging/linux/jame-prompt.desktop
+install -Dm644 packaging/linux/jame-prompt.desktop \
+  %{buildroot}%{_datadir}/applications/%{desktop_app_id}.desktop
 install -Dm644 packaging/linux/jame-prompt.1 %{buildroot}%{_mandir}/man1/%{name}.1
 install -Dm644 LICENSE %{buildroot}%{_licensedir}/%{name}/LICENSE
 install -Dm644 packaging/linux/copyright %{buildroot}%{_docdir}/%{name}/copyright
@@ -67,7 +68,7 @@ done
 %license %{_licensedir}/%{name}/LICENSE
 %doc %{_docdir}/%{name}/copyright
 %{_bindir}/jame-prompt
-%{_datadir}/applications/jame-prompt.desktop
+%{_datadir}/applications/%{desktop_app_id}.desktop
 %{_datadir}/icons/hicolor/*/apps/jame-prompt.png
 %{_mandir}/man1/jame-prompt.1*
 

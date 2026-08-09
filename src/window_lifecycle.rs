@@ -1,5 +1,6 @@
 use crate::config::{
-    APP_ID, WINDOW_INITIAL_HEIGHT, WINDOW_INITIAL_WIDTH, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH,
+    LINUX_DESKTOP_APP_ID, WINDOW_INITIAL_HEIGHT, WINDOW_INITIAL_WIDTH, WINDOW_MIN_HEIGHT,
+    WINDOW_MIN_WIDTH,
 };
 use crate::ui::Message;
 use iced::{window, Size, Task};
@@ -42,7 +43,7 @@ pub(crate) fn settings() -> window::Settings {
 
     #[cfg(target_os = "linux")]
     {
-        settings.platform_specific.application_id = APP_ID.into();
+        settings.platform_specific.application_id = LINUX_DESKTOP_APP_ID.into();
     }
 
     settings
@@ -118,5 +119,15 @@ mod tests {
         );
         assert!(!settings.exit_on_close_request);
         assert!(settings.visible);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_window_uses_portal_compatible_application_id() {
+        let settings = settings();
+        assert_eq!(
+            settings.platform_specific.application_id,
+            LINUX_DESKTOP_APP_ID
+        );
     }
 }

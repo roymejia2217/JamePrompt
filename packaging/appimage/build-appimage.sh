@@ -2,6 +2,7 @@
 set -euo pipefail
 
 APP_ID="jame-prompt"
+DESKTOP_APP_ID="io.github.roymejia2217.JamePrompt"
 APP_NAME="JamePrompt"
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
 ARCH="${ARCH:-x86_64}"
@@ -42,10 +43,10 @@ rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/512x512/apps" "$DIST_DIR"
 
 install -Dm755 "target/release/${APP_ID}" "$APPDIR/usr/bin/${APP_ID}"
-install -Dm644 "packaging/linux/${APP_ID}.desktop" "$APPDIR/usr/share/applications/${APP_ID}.desktop"
+install -Dm644 "packaging/linux/${APP_ID}.desktop" "$APPDIR/usr/share/applications/${DESKTOP_APP_ID}.desktop"
 install -Dm644 "assets/icons/app_icon.png" "$APPDIR/usr/share/icons/hicolor/512x512/apps/${APP_ID}.png"
 install -Dm644 "assets/icons/app_icon.png" "$APPDIR/${APP_ID}.png"
-install -Dm644 "packaging/linux/${APP_ID}.desktop" "$APPDIR/${APP_ID}.desktop"
+install -Dm644 "packaging/linux/${APP_ID}.desktop" "$APPDIR/${DESKTOP_APP_ID}.desktop"
 
 cat > "$APPDIR/AppRun" <<'APPRUN'
 #!/usr/bin/env bash
@@ -57,5 +58,5 @@ exec "${HERE}/usr/bin/jame-prompt" "$@"
 APPRUN
 chmod 755 "$APPDIR/AppRun"
 
-linuxdeploy --appdir "$APPDIR" --desktop-file "$APPDIR/${APP_ID}.desktop" --icon-file "$APPDIR/${APP_ID}.png"
+linuxdeploy --appdir "$APPDIR" --desktop-file "$APPDIR/${DESKTOP_APP_ID}.desktop" --icon-file "$APPDIR/${APP_ID}.png"
 ARCH="$ARCH" VERSION="$VERSION" appimagetool "$APPDIR" "${DIST_DIR}/${APP_ID}-${VERSION}-${ARCH}.AppImage"

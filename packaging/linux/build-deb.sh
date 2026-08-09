@@ -2,6 +2,7 @@
 set -e
 
 APP_ID="jame-prompt"
+DESKTOP_APP_ID="io.github.roymejia2217.JamePrompt"
 APP_NAME="JamePrompt"
 MAINTAINER="Roy Mejia <roymejia2217@gmail.com>"
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
@@ -38,7 +39,7 @@ fi
 
 rm -rf "$ROOT"
 install -Dm755 "target/release/${APP_ID}" "$ROOT/usr/bin/${APP_ID}"
-install -Dm644 "packaging/linux/${APP_ID}.desktop" "$ROOT/usr/share/applications/${APP_ID}.desktop"
+install -Dm644 "packaging/linux/${APP_ID}.desktop" "$ROOT/usr/share/applications/${DESKTOP_APP_ID}.desktop"
 install -Dm755 "packaging/linux/scripts/postinst" "$ROOT/DEBIAN/postinst"
 install -Dm755 "packaging/linux/scripts/postrm" "$ROOT/DEBIAN/postrm"
 install -Dm644 "packaging/linux/copyright" "$ROOT/usr/share/doc/${APP_ID}/copyright"
@@ -61,7 +62,7 @@ Priority: optional
 Architecture: ${ARCH}
 Maintainer: ${MAINTAINER}
 Installed-Size: ${installed_size}
-Depends: libc6, libgcc-s1, libgtk-3-0, libxdo3, libayatana-appindicator3-1 | libappindicator3-1, libx11-6, libxtst6, libxkbcommon0, libfontconfig1, libfreetype6, libglib2.0-0, libgdk-pixbuf-2.0-0, hicolor-icon-theme, desktop-file-utils
+Depends: libc6, libgcc-s1, libgtk-3-0, libxdo3, libayatana-appindicator3-1 | libappindicator3-1, libx11-6, libxtst6, libxkbcommon0, libfontconfig1, libfreetype6, libglib2.0-0, libgdk-pixbuf-2.0-0, hicolor-icon-theme, desktop-file-utils, xdg-desktop-portal
 Description: Lightweight local prompt manager
  JamePrompt is a lightweight local prompt manager with hotkeys,
  clipboard integration, and system tray support.
