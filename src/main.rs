@@ -38,11 +38,22 @@ fn title_application(app: &JamePromptApp, _window_id: window::Id) -> String {
 fn update_application(app: &mut JamePromptApp, message: Message) -> Task<Message> {
     match window_lifecycle::classify(&message) {
         WindowLifecycleAction::Delegate => app.update(message),
-        WindowLifecycleAction::Close(id) => window_lifecycle::close(id),
-        WindowLifecycleAction::Open => {
-            window_lifecycle::open().map(|id| Message::ShowWindow(Some(id)))
+        WindowLifecycleAction::Close(_id) if app.is_smoke_mode() => app.update(message),
+        WindowLifecycleAction::Close(id) => {
+            app.record_window_closed(id);
+            window_lifecycle::close(id)
         }
-        WindowLifecycleAction::Restore(id) => window_lifecycle::restore(id),
+        WindowLifecycleAction::Open => {
+            if app.begin_window_open() {
+                window_lifecycle::open().map(|id| Message::ShowWindow(Some(id)))
+            } else {
+                Task::none()
+            }
+        }
+        WindowLifecycleAction::Restore(id) => {
+            app.record_window_opened(id);
+            window_lifecycle::restore(id)
+        }
     }
 }
 
@@ -54,8 +65,8 @@ fn theme_application(app: &JamePromptApp, _window_id: window::Id) -> Theme {
     app.theme()
 }
 
-fn initial_window_task(start_minimized: bool) -> Task<Message> {
-    if start_minimized {
+fn initial_window_task(app: &mut JamePromptApp, start_minimized: bool) -> Task<Message> {
+    if start_minimized || !app.begin_window_open() {
         Task::none()
     } else {
         window_lifecycle::open().map(|id| Message::ShowWindow(Some(id)))
@@ -90,9 +101,9 @@ fn main() -> iced::Result {
         .subscription(JamePromptApp::subscription)
         .run_with(move || {
             measure("startup.app_state", || {
-                let (app, startup_task) =
+                let (mut app, startup_task) =
                     JamePromptApp::new_with_hidden_start(start_minimized, ui_smoke);
-                let window_task = initial_window_task(start_minimized);
+                let window_task = initial_window_task(&mut app, start_minimized);
                 (app, Task::batch([startup_task, window_task]))
             })
         })
