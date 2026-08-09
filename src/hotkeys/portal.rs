@@ -22,6 +22,7 @@ const REBIND_DEBOUNCE: Duration = Duration::from_millis(300);
 
 #[derive(Debug, Clone)]
 struct PortalBinding {
+    shortcut_id: String,
     preferred_trigger: String,
     description: String,
 }
@@ -35,13 +36,17 @@ pub(super) struct PortalHotkeyService {
 impl PortalHotkeyService {
     pub(super) fn new() -> Option<Self> {
         let bindings = Arc::new(Mutex::new(HashMap::new()));
+        let active_routes = Arc::new(Mutex::new(HashMap::new()));
         let (refresh_tx, refresh_rx) = mpsc::channel();
         let (init_tx, init_rx) = mpsc::sync_channel(1);
         let worker_bindings = Arc::clone(&bindings);
+        let worker_active_routes = Arc::clone(&active_routes);
 
         thread::Builder::new()
             .name("jameprompt-wayland-shortcuts".into())
-            .spawn(move || portal_worker(worker_bindings, refresh_rx, init_tx))
+            .spawn(move || {
+                portal_worker(worker_bindings, worker_active_routes, refresh_rx, init_tx)
+            })
             .ok()?;
 
         match init_rx.recv_timeout(Duration::from_secs(6)) {
@@ -61,12 +66,19 @@ impl PortalHotkeyService {
         }
     }
 
-    pub(super) fn register(&self, key_str: &str) -> Option<u32> {
+    pub(super) fn register(
+        &self,
+        prompt_id: &str,
+        prompt_name: &str,
+        key_str: &str,
+    ) -> Option<u32> {
         let preferred_trigger = to_portal_trigger(key_str)?;
+        let shortcut_id = portal_shortcut_id(prompt_id, prompt_name, key_str)?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let binding = PortalBinding {
+            shortcut_id,
             preferred_trigger,
-            description: format!("Paste JamePrompt prompt ({key_str})"),
+            description: portal_description(prompt_name),
         };
 
         self.bindings.lock().ok()?.insert(id, binding);
@@ -111,6 +123,7 @@ static PORTAL_EVENTS: OnceLock<Mutex<VecDeque<u32>>> = OnceLock::new();
 
 fn portal_worker(
     bindings: Arc<Mutex<HashMap<u32, PortalBinding>>>,
+    active_routes: Arc<Mutex<HashMap<String, u32>>>,
     refresh_rx: mpsc::Receiver<()>,
     init_tx: mpsc::SyncSender<Result<(), String>>,
 ) {
@@ -121,10 +134,10 @@ fn portal_worker(
 
         register_host_application(&connection)?;
         ensure_global_shortcuts_available(&connection)?;
-        subscribe_activated(&connection);
+        subscribe_activated(&connection, Arc::clone(&active_routes));
         let _ = init_tx.send(Ok(()));
 
-        run_worker_loop(&context, &connection, bindings, refresh_rx);
+        run_worker_loop(&context, &connection, bindings, active_routes, refresh_rx);
         Ok::<(), String>(())
     });
 
@@ -137,6 +150,7 @@ fn run_worker_loop(
     context: &glib::MainContext,
     connection: &gio::DBusConnection,
     bindings: Arc<Mutex<HashMap<u32, PortalBinding>>>,
+    active_routes: Arc<Mutex<HashMap<String, u32>>>,
     refresh_rx: mpsc::Receiver<()>,
 ) {
     let mut active_session: Option<String> = None;
@@ -160,21 +174,39 @@ fn run_worker_loop(
 
         if pending_refresh.is_some_and(|started| started.elapsed() >= REBIND_DEBOUNCE) {
             pending_refresh = None;
-            if let Some(session) = active_session.take() {
-                close_session(connection, &session);
-            }
 
             let snapshot = bindings
                 .lock()
                 .map(|bindings| bindings.clone())
                 .unwrap_or_default();
             if snapshot.is_empty() {
+                if let Some(session) = active_session.take() {
+                    close_session(connection, &session);
+                }
+                if let Ok(mut routes) = active_routes.lock() {
+                    routes.clear();
+                }
                 continue;
             }
 
             match create_and_bind_session(context, connection, &snapshot) {
-                Ok(session) => active_session = Some(session),
-                Err(error) => tracing::warn!("Wayland shortcut binding failed: {error}"),
+                Ok(session) => {
+                    let routes = snapshot
+                        .iter()
+                        .map(|(id, binding)| (binding.shortcut_id.clone(), *id))
+                        .collect();
+                    if let Ok(mut active) = active_routes.lock() {
+                        *active = routes;
+                    }
+                    if let Some(previous) = active_session.replace(session) {
+                        close_session(connection, &previous);
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        "Wayland shortcut binding failed; keeping previous bindings active: {error}"
+                    );
+                }
             }
         }
     }
@@ -228,7 +260,10 @@ fn ensure_global_shortcuts_available(connection: &gio::DBusConnection) -> Result
     Ok(())
 }
 
-fn subscribe_activated(connection: &gio::DBusConnection) {
+fn subscribe_activated(
+    connection: &gio::DBusConnection,
+    active_routes: Arc<Mutex<HashMap<String, u32>>>,
+) {
     #[allow(deprecated)]
     connection.signal_subscribe(
         Some(PORTAL_BUS),
@@ -245,11 +280,14 @@ fn subscribe_activated(connection: &gio::DBusConnection) {
             let Some(shortcut_id) = shortcut_id.str() else {
                 return;
             };
-            let Some(id) = shortcut_id
-                .strip_prefix("jameprompt-")
-                .and_then(|value| value.parse::<u32>().ok())
-            else {
-                return;
+            let id = {
+                let Ok(routes) = active_routes.lock() else {
+                    return;
+                };
+                let Some(id) = routes.get(shortcut_id).copied() else {
+                    return;
+                };
+                id
             };
             if let Ok(mut queue) = event_queue().lock() {
                 queue.push_back(id);
@@ -432,7 +470,7 @@ fn shortcuts_variant(bindings: &HashMap<u32, PortalBinding>) -> Result<glib::Var
         properties.insert("description", binding.description.as_str());
         properties.insert("preferred_trigger", binding.preferred_trigger.as_str());
         entries.push(glib::Variant::tuple_from_iter([
-            format!("jameprompt-{id}").to_variant(),
+            binding.shortcut_id.to_variant(),
             properties.end(),
         ]));
     }
@@ -462,6 +500,50 @@ fn request_path(connection: &gio::DBusConnection, token: &str) -> Result<String,
 
 fn portal_token(prefix: &str) -> String {
     format!("{prefix}_{}", Uuid::new_v4().simple())
+}
+
+fn stable_hash(seed: u64, values: &[&str]) -> u64 {
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = seed;
+    for value in values {
+        for byte in value.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(PRIME);
+        }
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}
+
+fn portal_shortcut_id(prompt_id: &str, prompt_name: &str, hotkey: &str) -> Option<String> {
+    let prompt_id = prompt_id.trim();
+    if prompt_id.is_empty() {
+        return None;
+    }
+    let prompt_name = prompt_name.trim();
+    let hotkey = hotkey.trim();
+    let values = [prompt_id, prompt_name, hotkey];
+    let primary = stable_hash(0xcbf2_9ce4_8422_2325, &values);
+    let secondary = stable_hash(0x8422_2325_cbf2_9ce4, &values);
+    Some(format!("prompt_{primary:016x}{secondary:016x}"))
+}
+
+fn portal_description(prompt_name: &str) -> String {
+    const MAX_LABEL_CHARS: usize = 64;
+    let normalized = prompt_name.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = if normalized.is_empty() {
+        "Untitled prompt".to_string()
+    } else {
+        normalized
+    };
+
+    let mut chars = normalized.chars();
+    let mut label: String = chars.by_ref().take(MAX_LABEL_CHARS).collect();
+    if chars.next().is_some() {
+        label.push('…');
+    }
+    format!("Paste prompt: {label}")
 }
 
 pub(super) fn to_portal_trigger(hotkey: &str) -> Option<String> {
@@ -547,12 +629,46 @@ mod tests {
     }
 
     #[test]
+    fn shortcut_id_is_stable_until_prompt_binding_changes() {
+        let original = portal_shortcut_id("prompt-123", "continuar-proyecto", "Shift+Alt+C");
+        assert_eq!(
+            original,
+            portal_shortcut_id("prompt-123", "continuar-proyecto", "Shift+Alt+C")
+        );
+        assert_ne!(
+            original,
+            portal_shortcut_id("prompt-123", "continuar-proyecto", "Shift+Alt+V")
+        );
+        assert_ne!(
+            original,
+            portal_shortcut_id("prompt-123", "continuar proyecto", "Shift+Alt+C")
+        );
+        assert_ne!(
+            original,
+            portal_shortcut_id("prompt-456", "continuar-proyecto", "Shift+Alt+C")
+        );
+    }
+
+    #[test]
+    fn portal_description_identifies_the_prompt_without_duplicating_the_trigger() {
+        let description = portal_description("  continuar-proyecto  ");
+        assert_eq!(description, "Paste prompt: continuar-proyecto");
+        assert!(!description.contains("Shift+Alt+C"));
+    }
+
+    #[test]
+    fn portal_shortcut_requires_persistent_prompt_identity() {
+        assert_eq!(portal_shortcut_id("", "Prompt", "Ctrl+P"), None);
+    }
+
+    #[test]
     fn shortcut_array_has_portal_signature() {
         let bindings = HashMap::from([(
             7,
             PortalBinding {
+                shortcut_id: "prompt_test".into(),
                 preferred_trigger: "CTRL+SHIFT+p".into(),
-                description: "Paste prompt".into(),
+                description: "Paste prompt: Test".into(),
             },
         )]);
         let variant = shortcuts_variant(&bindings).expect("shortcut variant");

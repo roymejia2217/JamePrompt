@@ -211,6 +211,7 @@ pub struct JamePromptApp {
     pending_duplicate_mode: DuplicateMode,
     listening_for_hotkey: bool,
     main_window_id: Option<iced::window::Id>,
+    window_open_pending: bool,
     content_width: f32,
     smoke_mode: bool,
     smoke_deadline: Option<Instant>,
@@ -252,7 +253,7 @@ impl Default for JamePromptApp {
                 for p in &all_prompts {
                     if let Some(ref hk) = p.hotkey {
                         if p.hotkey_enabled && settings.hotkeys_enabled {
-                            if let Some(hotkey_id) = svc.register(hk) {
+                            if let Some(hotkey_id) = svc.register(&p.id, &p.name, hk) {
                                 hotkey_ids.insert(hotkey_id, p.id.clone());
                             }
                         }
@@ -298,6 +299,7 @@ impl Default for JamePromptApp {
             pending_duplicate_mode: DuplicateMode::Skip,
             listening_for_hotkey: false,
             main_window_id: None,
+            window_open_pending: false,
             content_width: WINDOW_INITIAL_WIDTH,
             smoke_mode: false,
             smoke_deadline: None,
@@ -337,6 +339,7 @@ impl JamePromptApp {
             pending_duplicate_mode: DuplicateMode::Skip,
             listening_for_hotkey: false,
             main_window_id: None,
+            window_open_pending: false,
             content_width: WINDOW_INITIAL_WIDTH,
             smoke_mode: false,
             smoke_deadline: None,
@@ -553,7 +556,7 @@ impl JamePromptApp {
             for prompt in &self.all_prompts {
                 if prompt.hotkey_enabled {
                     if let Some(ref hotkey) = prompt.hotkey {
-                        if let Some(hotkey_id) = svc.register(hotkey) {
+                        if let Some(hotkey_id) = svc.register(&prompt.id, &prompt.name, hotkey) {
                             self.hotkey_ids.insert(hotkey_id, prompt.id.clone());
                         }
                     }
@@ -770,6 +773,7 @@ impl JamePromptApp {
             pending_duplicate_mode: DuplicateMode::Skip,
             listening_for_hotkey: false,
             main_window_id: None,
+            window_open_pending: false,
             content_width: WINDOW_INITIAL_WIDTH,
             smoke_mode: true,
             smoke_deadline: None,
@@ -802,7 +806,7 @@ impl JamePromptApp {
         let tray_available = app.tray.is_some();
         let fallback_task =
             if should_show_window_after_hidden_start(start_minimized, tray_available) {
-                iced::window::get_latest().map(Message::ShowWindow)
+                Task::done(Message::ShowWindow(None))
             } else {
                 Task::none()
             };
@@ -812,6 +816,30 @@ impl JamePromptApp {
 
     pub fn title(&self) -> String {
         APP_NAME.to_string()
+    }
+
+    pub(crate) fn begin_window_open(&mut self) -> bool {
+        if self.main_window_id.is_some() || self.window_open_pending {
+            return false;
+        }
+        self.window_open_pending = true;
+        true
+    }
+
+    pub(crate) fn record_window_opened(&mut self, id: iced::window::Id) {
+        self.main_window_id = Some(id);
+        self.window_open_pending = false;
+    }
+
+    pub(crate) fn record_window_closed(&mut self, id: iced::window::Id) {
+        if self.main_window_id == Some(id) {
+            self.main_window_id = None;
+        }
+        self.window_open_pending = false;
+    }
+
+    pub(crate) fn is_smoke_mode(&self) -> bool {
+        self.smoke_mode
     }
 
     pub fn theme(&self) -> Theme {
@@ -1002,7 +1030,9 @@ impl JamePromptApp {
                                                 && self.settings.hotkeys_enabled
                                             {
                                                 if let Some(ref svc) = self.hotkey_service {
-                                                    if let Some(hotkey_id) = svc.register(hk) {
+                                                    if let Some(hotkey_id) =
+                                                        svc.register(&prompt.id, &prompt.name, hk)
+                                                    {
                                                         self.hotkey_ids
                                                             .insert(hotkey_id, editing_id.clone());
                                                     }
@@ -1046,7 +1076,9 @@ impl JamePromptApp {
                                                 && self.settings.hotkeys_enabled
                                             {
                                                 if let Some(ref svc) = self.hotkey_service {
-                                                    if let Some(hotkey_id) = svc.register(hk) {
+                                                    if let Some(hotkey_id) =
+                                                        svc.register(&new_id, &prompt.name, hk)
+                                                    {
                                                         self.hotkey_ids
                                                             .insert(hotkey_id, new_id.clone());
                                                     }
@@ -1159,7 +1191,7 @@ impl JamePromptApp {
                             for p in &self.all_prompts {
                                 if p.hotkey_enabled {
                                     if let Some(ref hk) = p.hotkey {
-                                        if let Some(hotkey_id) = svc.register(hk) {
+                                        if let Some(hotkey_id) = svc.register(&p.id, &p.name, hk) {
                                             self.hotkey_ids.insert(hotkey_id, p.id.clone());
                                         }
                                     }
@@ -1330,7 +1362,7 @@ impl JamePromptApp {
                     if let Some(event) = self.tray.as_ref().and_then(TrayHandle::poll_event) {
                         return match event {
                             TrayEvent::ShowRequested => {
-                                iced::window::get_latest().map(Message::ShowWindow)
+                                Task::done(Message::ShowWindow(self.main_window_id))
                             }
                             TrayEvent::QuitRequested => iced::exit(),
                         };
@@ -3402,6 +3434,33 @@ mod tests {
     fn close_requests_exit_in_smoke_mode() {
         assert!(should_exit_on_close_request(true));
         assert!(!should_exit_on_close_request(false));
+    }
+
+    #[test]
+    fn window_lifecycle_coalesces_repeated_open_requests() {
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+        assert!(app.begin_window_open());
+        assert!(!app.begin_window_open());
+
+        let id = iced::window::Id::unique();
+        app.record_window_opened(id);
+        assert!(!app.begin_window_open());
+
+        app.record_window_closed(id);
+        assert!(app.begin_window_open());
+    }
+
+    #[test]
+    fn closing_stale_window_does_not_clear_current_window() {
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+        let current = iced::window::Id::unique();
+        let stale = iced::window::Id::unique();
+        app.record_window_opened(current);
+
+        app.record_window_closed(stale);
+
+        assert_eq!(app.main_window_id, Some(current));
+        assert!(!app.window_open_pending);
     }
 
     #[test]

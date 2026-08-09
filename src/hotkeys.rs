@@ -125,11 +125,11 @@ impl HotkeyService {
         Some(Self { backend })
     }
 
-    pub fn register(&self, key_str: &str) -> Option<u32> {
+    pub fn register(&self, prompt_id: &str, prompt_name: &str, key_str: &str) -> Option<u32> {
         perf::measure("hotkeys.register", || match &self.backend {
             HotkeyBackend::Native(service) => service.register(key_str),
             #[cfg(target_os = "linux")]
-            HotkeyBackend::Portal(service) => service.register(key_str),
+            HotkeyBackend::Portal(service) => service.register(prompt_id, prompt_name, key_str),
         })
     }
 
