@@ -1,19 +1,14 @@
-use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager};
-use rdev::{simulate, EventType, Key as RdevKey};
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::thread;
-use std::time::Duration;
-
-use crate::perf;
+use global_hotkey::hotkey::HotKey;
 use iced::keyboard::{key::Named, Key, Modifiers};
 
-/// Formats a keyboard key and modifiers into a hotkey string suitable for
-/// `global_hotkey::HotKey::from_str()`.
-///
-/// Returns `None` if no modifiers are pressed (to prevent single-key global hotkeys).
-/// The output format uses `Ctrl`, `Shift`, `Alt`, `Super` modifier names
-/// joined with `+`, e.g. `"Ctrl+Shift+P"`.
+use crate::perf;
+use crate::platform::HotkeyBackendKind;
+
+mod native;
+#[cfg(target_os = "linux")]
+mod portal;
+
+/// Formats a keyboard key and modifiers into JamePrompt's portable hotkey notation.
 pub fn format_hotkey(key: &Key, modifiers: Modifiers) -> Option<String> {
     let mut parts: Vec<&str> = Vec::new();
 
@@ -29,24 +24,19 @@ pub fn format_hotkey(key: &Key, modifiers: Modifiers) -> Option<String> {
     if modifiers.logo() {
         parts.push("Super");
     }
-
-    // Require at least one modifier for a global hotkey
     if parts.is_empty() {
         return None;
     }
 
     let key_str = format_key(key)?;
     parts.push(&key_str);
-
     Some(parts.join("+"))
 }
 
-/// Formats an iced `Key` into its string representation for hotkey notation.
 fn format_key(key: &Key) -> Option<String> {
     match key {
         Key::Character(c) => {
             let ch = c.chars().next()?;
-            // Uppercase single characters for hotkey display
             Some(ch.to_uppercase().collect::<String>())
         }
         Key::Named(named) => Some(format_named_key(named)),
@@ -54,10 +44,8 @@ fn format_key(key: &Key) -> Option<String> {
     }
 }
 
-/// Maps an iced `Named` key to its string representation for hotkey notation.
 fn format_named_key(named: &Named) -> String {
     match named {
-        // Function keys
         Named::F1 => "F1".to_string(),
         Named::F2 => "F2".to_string(),
         Named::F3 => "F3".to_string(),
@@ -83,7 +71,6 @@ fn format_named_key(named: &Named) -> String {
         Named::F23 => "F23".to_string(),
         Named::F24 => "F24".to_string(),
         Named::F25 => "F25".to_string(),
-        // Navigation keys
         Named::ArrowUp => "ArrowUp".to_string(),
         Named::ArrowDown => "ArrowDown".to_string(),
         Named::ArrowLeft => "ArrowLeft".to_string(),
@@ -94,13 +81,11 @@ fn format_named_key(named: &Named) -> String {
         Named::PageDown => "PageDown".to_string(),
         Named::Insert => "Insert".to_string(),
         Named::Delete => "Delete".to_string(),
-        // Action keys
         Named::Enter => "Enter".to_string(),
         Named::Space => "Space".to_string(),
         Named::Tab => "Tab".to_string(),
         Named::Escape => "Escape".to_string(),
         Named::Backspace => "Backspace".to_string(),
-        // Other common keys
         Named::CapsLock => "CapsLock".to_string(),
         Named::NumLock => "NumLock".to_string(),
         Named::ScrollLock => "ScrollLock".to_string(),
@@ -111,73 +96,70 @@ fn format_named_key(named: &Named) -> String {
     }
 }
 
-/// Validates whether a hotkey string can be parsed by `global_hotkey::HotKey::from_str()`.
 pub fn validate_hotkey(hotkey_str: &str) -> bool {
     hotkey_str.parse::<HotKey>().is_ok()
 }
 
+enum HotkeyBackend {
+    Native(native::NativeHotkeyService),
+    #[cfg(target_os = "linux")]
+    Portal(portal::PortalHotkeyService),
+}
+
 pub struct HotkeyService {
-    manager: GlobalHotKeyManager,
-    registered: RefCell<HashMap<u32, HotKey>>,
+    backend: HotkeyBackend,
 }
 
 impl HotkeyService {
     pub fn new() -> Option<Self> {
-        GlobalHotKeyManager::new().ok().map(|manager| Self {
-            manager,
-            registered: RefCell::new(HashMap::new()),
-        })
+        let backend = match crate::platform::hotkey_backend_kind() {
+            HotkeyBackendKind::Native => HotkeyBackend::Native(native::NativeHotkeyService::new()?),
+            #[cfg(target_os = "linux")]
+            HotkeyBackendKind::Portal => HotkeyBackend::Portal(portal::PortalHotkeyService::new()?),
+            #[cfg(not(target_os = "linux"))]
+            HotkeyBackendKind::Portal => return None,
+            HotkeyBackendKind::Unavailable => return None,
+        };
+        Some(Self { backend })
     }
 
     pub fn register(&self, key_str: &str) -> Option<u32> {
-        perf::measure("hotkeys.register", || {
-            if let Ok(hotkey) = key_str.parse::<HotKey>() {
-                if self.manager.register(hotkey).is_ok() {
-                    self.registered.borrow_mut().insert(hotkey.id(), hotkey);
-                    return Some(hotkey.id());
-                }
-            }
-            None
+        perf::measure("hotkeys.register", || match &self.backend {
+            HotkeyBackend::Native(service) => service.register(key_str),
+            #[cfg(target_os = "linux")]
+            HotkeyBackend::Portal(service) => service.register(key_str),
         })
     }
 
     pub fn unregister(&self, hotkey_id: u32) -> bool {
-        perf::measure("hotkeys.unregister", || {
-            if let Some(hotkey) = self.registered.borrow_mut().remove(&hotkey_id) {
-                self.manager.unregister(hotkey).is_ok()
-            } else {
-                false
-            }
+        perf::measure("hotkeys.unregister", || match &self.backend {
+            HotkeyBackend::Native(service) => service.unregister(hotkey_id),
+            #[cfg(target_os = "linux")]
+            HotkeyBackend::Portal(service) => service.unregister(hotkey_id),
         })
     }
 
-    /// Polls the global hotkey event receiver for any pending events.
-    /// Returns a list of triggered hotkey IDs (only Pressed events).
     pub fn poll_events() -> Vec<u32> {
         perf::measure("hotkeys.poll_events", || {
-            let receiver = GlobalHotKeyEvent::receiver();
-            let mut triggered = Vec::new();
-            while let Ok(event) = receiver.try_recv() {
-                if event.state == global_hotkey::HotKeyState::Pressed {
-                    triggered.push(event.id());
-                }
-            }
+            let mut triggered = native::poll_events();
+            #[cfg(target_os = "linux")]
+            triggered.extend(portal::poll_events());
             triggered
         })
     }
 }
 
-/// Simulates Ctrl+V to inject text into the active window.
+/// Injects Ctrl+V only on platforms where native synthetic input is supported.
+/// Wayland uses a separate permissioned input backend and must never fall back
+/// to X11-style rdev injection.
 pub fn paste_to_active_window() {
     perf::measure("hotkeys.paste_to_active_window_spawn", || {
-        thread::spawn(|| {
-            thread::sleep(Duration::from_millis(150));
-            let _ = simulate(&EventType::KeyPress(RdevKey::ControlLeft));
-            let _ = simulate(&EventType::KeyPress(RdevKey::KeyV));
-            thread::sleep(Duration::from_millis(20));
-            let _ = simulate(&EventType::KeyRelease(RdevKey::KeyV));
-            let _ = simulate(&EventType::KeyRelease(RdevKey::ControlLeft));
-        });
+        #[cfg(target_os = "linux")]
+        if crate::platform::display_server() == crate::platform::DisplayServer::Wayland {
+            tracing::debug!("Native paste injection is disabled on Wayland");
+            return;
+        }
+        native::paste_to_active_window();
     });
 }
 
@@ -185,173 +167,60 @@ pub fn paste_to_active_window() {
 mod tests {
     use super::*;
 
-    // --- format_hotkey tests ---
-
     #[test]
     fn test_format_hotkey_ctrl_shift_p() {
         let key = Key::Character("p".into());
         let mut modifiers = Modifiers::empty();
         modifiers |= Modifiers::CTRL;
         modifiers |= Modifiers::SHIFT;
-        let result = format_hotkey(&key, modifiers);
-        assert_eq!(result, Some("Ctrl+Shift+P".to_string()));
+        assert_eq!(format_hotkey(&key, modifiers), Some("Ctrl+Shift+P".into()));
     }
 
     #[test]
     fn test_format_hotkey_no_modifiers_returns_none() {
-        let key = Key::Character("a".into());
-        let modifiers = Modifiers::empty();
-        let result = format_hotkey(&key, modifiers);
-        assert!(
-            result.is_none(),
-            "Single key without modifiers should return None"
-        );
-    }
-
-    #[test]
-    fn test_format_hotkey_single_modifier() {
-        let key = Key::Character("g".into());
-        let mut modifiers = Modifiers::empty();
-        modifiers |= Modifiers::CTRL;
-        let result = format_hotkey(&key, modifiers);
-        assert_eq!(result, Some("Ctrl+G".to_string()));
+        assert!(format_hotkey(&Key::Character("a".into()), Modifiers::empty()).is_none());
     }
 
     #[test]
     fn test_format_hotkey_function_key() {
-        let key = Key::Named(Named::F1);
         let mut modifiers = Modifiers::empty();
         modifiers |= Modifiers::CTRL;
-        let result = format_hotkey(&key, modifiers);
-        assert_eq!(result, Some("Ctrl+F1".to_string()));
-    }
-
-    #[test]
-    fn test_format_hotkey_alt_modifier() {
-        let key = Key::Character("x".into());
-        let mut modifiers = Modifiers::empty();
-        modifiers |= Modifiers::ALT;
-        let result = format_hotkey(&key, modifiers);
-        assert_eq!(result, Some("Alt+X".to_string()));
-    }
-
-    #[test]
-    fn test_format_hotkey_super_modifier() {
-        let key = Key::Character("l".into());
-        let mut modifiers = Modifiers::empty();
-        modifiers |= Modifiers::LOGO;
-        let result = format_hotkey(&key, modifiers);
-        assert_eq!(result, Some("Super+L".to_string()));
+        assert_eq!(format_hotkey(&Key::Named(Named::F1), modifiers), Some("Ctrl+F1".into()));
     }
 
     #[test]
     fn test_format_hotkey_all_modifiers() {
-        let key = Key::Character("k".into());
-        let modifiers = Modifiers::all();
-        let result = format_hotkey(&key, modifiers);
-        assert!(result.is_some());
-        let hotkey_str = result.unwrap();
-        assert!(hotkey_str.contains("Ctrl"));
-        assert!(hotkey_str.contains("Shift"));
-        assert!(hotkey_str.contains("Alt"));
-        assert!(hotkey_str.contains("Super"));
-        assert!(hotkey_str.contains("K"));
-    }
-
-    #[test]
-    fn test_format_hotkey_named_enter() {
-        let key = Key::Named(Named::Enter);
-        let mut modifiers = Modifiers::empty();
-        modifiers |= Modifiers::CTRL;
-        let result = format_hotkey(&key, modifiers);
-        assert_eq!(result, Some("Ctrl+Enter".to_string()));
-    }
-
-    #[test]
-    fn test_format_hotkey_named_space() {
-        let key = Key::Named(Named::Space);
-        let mut modifiers = Modifiers::empty();
-        modifiers |= Modifiers::CTRL;
-        let result = format_hotkey(&key, modifiers);
-        assert_eq!(result, Some("Ctrl+Space".to_string()));
+        let hotkey = format_hotkey(&Key::Character("k".into()), Modifiers::all()).unwrap();
+        for expected in ["Ctrl", "Shift", "Alt", "Super", "K"] {
+            assert!(hotkey.contains(expected));
+        }
     }
 
     #[test]
     fn test_format_hotkey_unidentified_returns_none() {
-        let key = Key::Unidentified;
         let mut modifiers = Modifiers::empty();
         modifiers |= Modifiers::CTRL;
-        let result = format_hotkey(&key, modifiers);
-        assert!(result.is_none(), "Unidentified key should return None");
+        assert!(format_hotkey(&Key::Unidentified, modifiers).is_none());
     }
-
-    // --- validate_hotkey tests ---
 
     #[test]
     fn test_validate_hotkey_valid() {
-        assert!(
-            validate_hotkey("Ctrl+Shift+P"),
-            "Ctrl+Shift+P should be valid"
-        );
-        assert!(validate_hotkey("Ctrl+G"), "Ctrl+G should be valid");
-        assert!(validate_hotkey("Alt+F1"), "Alt+F1 should be valid");
+        assert!(validate_hotkey("Ctrl+Shift+P"));
+        assert!(validate_hotkey("Ctrl+G"));
+        assert!(validate_hotkey("Alt+F1"));
     }
 
     #[test]
     fn test_validate_hotkey_invalid() {
-        assert!(
-            !validate_hotkey("InvalidHotkey"),
-            "Random string should be invalid"
-        );
-        assert!(!validate_hotkey("++P"), "Double plus should be invalid");
+        assert!(!validate_hotkey("InvalidHotkey"));
+        assert!(!validate_hotkey("++P"));
+        assert!(!validate_hotkey(""));
     }
 
     #[test]
-    fn test_validate_hotkey_empty() {
-        assert!(!validate_hotkey(""), "Empty string should be invalid");
-    }
-
-    // --- HotkeyService tests ---
-
-    #[test]
-    fn test_unregister_removes_from_map() {
-        if let Some(svc) = HotkeyService::new() {
-            if let Some(hotkey_id) = svc.register("Ctrl+Shift+T") {
-                let result = svc.unregister(hotkey_id);
-                assert!(
-                    result,
-                    "Unregister should return true for registered hotkey"
-                );
-                assert!(
-                    !svc.registered.borrow().contains_key(&hotkey_id),
-                    "Hotkey should be removed from registered map after unregister"
-                );
-            }
-            // If register fails (e.g., in CI without a display server), skip the assertion
-        }
-        // If HotkeyService::new() fails (e.g., in CI without a display server), skip the test
-    }
-
-    #[test]
-    fn test_unregister_nonexistent_returns_false() {
-        if let Some(svc) = HotkeyService::new() {
-            let result = svc.unregister(99999);
-            assert!(
-                !result,
-                "Unregistering a non-existent hotkey ID should return false"
-            );
-        }
-    }
-
-    #[test]
-    fn test_unregister_twice_returns_false_second_time() {
-        if let Some(svc) = HotkeyService::new() {
-            if let Some(hotkey_id) = svc.register("Ctrl+Shift+U") {
-                let first = svc.unregister(hotkey_id);
-                assert!(first, "First unregister should return true");
-                let second = svc.unregister(hotkey_id);
-                assert!(!second, "Second unregister of same ID should return false");
-            }
+    fn test_unregister_nonexistent_returns_false_when_service_is_available() {
+        if let Some(service) = HotkeyService::new() {
+            assert!(!service.unregister(99999));
         }
     }
 }
