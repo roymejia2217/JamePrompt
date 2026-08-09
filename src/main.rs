@@ -79,7 +79,7 @@ fn main() -> iced::Result {
     iced::daemon(
         APP_NAME,
         move |app, message| update_application(app, message, ui_smoke),
-        |app, _window_id| app.view(),
+        |app: &JamePromptApp, _window_id| app.view(),
     )
     .theme(|app, _window_id| app.theme())
     .font(icon::FONT)
@@ -96,7 +96,6 @@ fn main() -> iced::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::launch::{
         initial_window_visible, should_run_perf_smoke_from_args, should_run_ui_smoke_from_args,
         should_show_window_after_hidden_start, should_start_minimized_from_args,
