@@ -29,6 +29,7 @@ struct PortalBinding {
 
 pub(super) struct PortalHotkeyService {
     bindings: Arc<Mutex<HashMap<u32, PortalBinding>>>,
+    runtime_ids: Mutex<HashMap<String, u32>>,
     refresh_tx: mpsc::Sender<()>,
     next_id: AtomicU32,
 }
@@ -52,6 +53,7 @@ impl PortalHotkeyService {
         match init_rx.recv_timeout(Duration::from_secs(6)) {
             Ok(Ok(())) => Some(Self {
                 bindings,
+                runtime_ids: Mutex::new(HashMap::new()),
                 refresh_tx,
                 next_id: AtomicU32::new(1),
             }),
@@ -72,9 +74,13 @@ impl PortalHotkeyService {
         prompt_name: &str,
         key_str: &str,
     ) -> Option<u32> {
+        let prompt_id = prompt_id.trim();
         let preferred_trigger = to_portal_trigger(key_str)?;
         let shortcut_id = portal_shortcut_id(prompt_id)?;
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let id = {
+            let mut runtime_ids = self.runtime_ids.lock().ok()?;
+            runtime_id_for_prompt(prompt_id, &mut runtime_ids, &self.next_id)?
+        };
         let binding = PortalBinding {
             shortcut_id,
             preferred_trigger,
@@ -516,6 +522,24 @@ fn stable_hash(seed: u64, values: &[&str]) -> u64 {
     hash
 }
 
+fn runtime_id_for_prompt(
+    prompt_id: &str,
+    runtime_ids: &mut HashMap<String, u32>,
+    next_id: &AtomicU32,
+) -> Option<u32> {
+    let prompt_id = prompt_id.trim();
+    if prompt_id.is_empty() {
+        return None;
+    }
+    if let Some(id) = runtime_ids.get(prompt_id) {
+        return Some(*id);
+    }
+
+    let id = next_id.fetch_add(1, Ordering::Relaxed);
+    runtime_ids.insert(prompt_id.to_string(), id);
+    Some(id)
+}
+
 fn portal_shortcut_id(prompt_id: &str) -> Option<String> {
     let prompt_id = prompt_id.trim();
     if prompt_id.is_empty() {
@@ -632,6 +656,23 @@ mod tests {
         assert_eq!(original, portal_shortcut_id("prompt-123"));
         assert_eq!(original, portal_shortcut_id("  prompt-123  "));
         assert_ne!(original, portal_shortcut_id("prompt-456"));
+    }
+
+    #[test]
+    fn runtime_id_is_reused_for_prompt_edits() {
+        let mut runtime_ids = HashMap::new();
+        let next_id = AtomicU32::new(1);
+        let original = runtime_id_for_prompt("prompt-123", &mut runtime_ids, &next_id);
+
+        assert_eq!(
+            original,
+            runtime_id_for_prompt("  prompt-123  ", &mut runtime_ids, &next_id)
+        );
+        assert_ne!(
+            original,
+            runtime_id_for_prompt("prompt-456", &mut runtime_ids, &next_id)
+        );
+        assert_eq!(runtime_ids.len(), 2);
     }
 
     #[test]
