@@ -187,7 +187,10 @@ mod tests {
     fn test_format_hotkey_function_key() {
         let mut modifiers = Modifiers::empty();
         modifiers |= Modifiers::CTRL;
-        assert_eq!(format_hotkey(&Key::Named(Named::F1), modifiers), Some("Ctrl+F1".into()));
+        assert_eq!(
+            format_hotkey(&Key::Named(Named::F1), modifiers),
+            Some("Ctrl+F1".into())
+        );
     }
 
     #[test]

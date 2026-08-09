@@ -47,7 +47,10 @@ fn detect_linux_display_server(
     wayland_display: Option<&str>,
     x11_display: Option<&str>,
 ) -> DisplayServer {
-    match session_type.map(str::trim).filter(|value| !value.is_empty()) {
+    match session_type
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         Some(value) if value.eq_ignore_ascii_case("wayland") => return DisplayServer::Wayland,
         Some(value) if value.eq_ignore_ascii_case("x11") => return DisplayServer::X11,
         _ => {}

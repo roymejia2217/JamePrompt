@@ -1,7 +1,6 @@
 use crate::config::LINUX_DESKTOP_APP_ID;
-use gtk::{gio, glib};
-use gtk::gio::prelude::*;
 use gtk::glib::variant::{ObjectPath, ToVariant};
+use gtk::{gio, glib};
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
@@ -183,10 +182,7 @@ fn run_worker_loop(
 
 fn register_host_application(connection: &gio::DBusConnection) -> Result<(), String> {
     let options = empty_options();
-    let parameters = glib::Variant::tuple_from_iter([
-        LINUX_DESKTOP_APP_ID.to_variant(),
-        options,
-    ]);
+    let parameters = glib::Variant::tuple_from_iter([LINUX_DESKTOP_APP_ID.to_variant(), options]);
 
     match connection.call_sync(
         Some(PORTAL_BUS),
@@ -203,7 +199,9 @@ fn register_host_application(connection: &gio::DBusConnection) -> Result<(), Str
         Err(error) => {
             let message = error.to_string();
             if message.contains("UnknownMethod") || message.contains("UnknownInterface") {
-                tracing::debug!("Host portal registry is unavailable; continuing with legacy portal discovery");
+                tracing::debug!(
+                    "Host portal registry is unavailable; continuing with legacy portal discovery"
+                );
                 Ok(())
             } else {
                 Err(format!("host portal registration failed: {error}"))
@@ -320,12 +318,8 @@ fn bind_shortcuts(
     let shortcuts = shortcuts_variant(bindings)?;
     let options = glib::VariantDict::new(None);
     options.insert("handle_token", handle_token.as_str());
-    let parameters = glib::Variant::tuple_from_iter([
-        session_path,
-        shortcuts,
-        "".to_variant(),
-        options.end(),
-    ]);
+    let parameters =
+        glib::Variant::tuple_from_iter([session_path, shortcuts, "".to_variant(), options.end()]);
 
     portal_request(context, connection, &request_path, || {
         connection.call_sync(
@@ -460,9 +454,7 @@ fn request_path(connection: &gio::DBusConnection, token: &str) -> Result<String,
     let unique_name = connection
         .unique_name()
         .ok_or_else(|| "session bus connection has no unique name".to_string())?;
-    let sender = unique_name
-        .trim_start_matches(':')
-        .replace('.', "_");
+    let sender = unique_name.trim_start_matches(':').replace('.', "_");
     Ok(format!(
         "/org/freedesktop/portal/desktop/request/{sender}/{token}"
     ))

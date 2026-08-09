@@ -73,11 +73,8 @@ impl RemoteDesktopState {
         connection: &gio::DBusConnection,
     ) -> Result<&str, String> {
         if self.session.is_none() {
-            let (session, restore_token) = create_remote_desktop_session(
-                context,
-                connection,
-                self.restore_token.as_deref(),
-            )?;
+            let (session, restore_token) =
+                create_remote_desktop_session(context, connection, self.restore_token.as_deref())?;
             self.session = Some(session);
             self.restore_token = restore_token;
             if let Err(error) = save_restore_token(self.restore_token.as_deref()) {
@@ -131,7 +128,9 @@ fn remote_desktop_worker(rx: mpsc::Receiver<()>) {
             thread::sleep(PASTE_DELAY);
 
             if !state.can_retry() {
-                tracing::debug!("Skipping Wayland automatic paste during permission retry cooldown");
+                tracing::debug!(
+                    "Skipping Wayland automatic paste during permission retry cooldown"
+                );
                 continue;
             }
 
@@ -160,10 +159,8 @@ fn remote_desktop_worker(rx: mpsc::Receiver<()>) {
 }
 
 fn register_host_application(connection: &gio::DBusConnection) -> Result<(), String> {
-    let parameters = glib::Variant::tuple_from_iter([
-        LINUX_DESKTOP_APP_ID.to_variant(),
-        empty_options(),
-    ]);
+    let parameters =
+        glib::Variant::tuple_from_iter([LINUX_DESKTOP_APP_ID.to_variant(), empty_options()]);
 
     match connection.call_sync(
         Some(PORTAL_BUS),
@@ -311,11 +308,7 @@ fn start_session(
         .to_variant();
     let options = glib::VariantDict::new(None);
     options.insert("handle_token", handle_token.as_str());
-    let parameters = glib::Variant::tuple_from_iter([
-        session_path,
-        "".to_variant(),
-        options.end(),
-    ]);
+    let parameters = glib::Variant::tuple_from_iter([session_path, "".to_variant(), options.end()]);
 
     let results = portal_request(context, connection, &request_path, || {
         connection.call_sync(
@@ -597,6 +590,9 @@ mod tests {
         let directory = tempdir().expect("temporary directory");
         let path = directory.path().join("portal.json");
         fs::write(&path, "not-json").expect("write corrupt state");
-        assert_eq!(load_permission_state(&path), PortalPermissionState::default());
+        assert_eq!(
+            load_permission_state(&path),
+            PortalPermissionState::default()
+        );
     }
 }
