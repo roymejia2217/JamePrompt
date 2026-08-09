@@ -53,8 +53,8 @@ jobs:
       - name: Materialize validated source commit
         run: |
           git rm .github/workflows/wayland-ux-fix.yml
-          git rm scripts/apply_wayland_shortcut_ux_fix.py
-          git rm scripts/harden_wayland_patch.py
+          git rm -f scripts/apply_wayland_shortcut_ux_fix.py
+          git rm -f scripts/harden_wayland_patch.py
           git diff --check
           git config user.name "Roy Mejía"
           git config user.email "54757516+roymejia2217@users.noreply.github.com"
