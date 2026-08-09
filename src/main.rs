@@ -19,43 +19,38 @@ pub mod prompt_service;
 pub mod settings_service;
 mod tray;
 mod ui;
+mod window_lifecycle;
 
 // Include pre-decoded RGBA icon data (generated at compile time by buildtime_png)
 include!(concat!(env!("OUT_DIR"), "/image.rs"));
 
-use config::{
-    APP_ID, WINDOW_INITIAL_HEIGHT, WINDOW_INITIAL_WIDTH, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH,
-};
-use iced::{window, Size};
-use launch::{initial_window_visible, should_run_ui_smoke_from_args, should_start_minimized};
+use config::APP_NAME;
+use iced::Task;
+use launch::{should_run_ui_smoke_from_args, should_start_minimized};
 use perf::measure;
-use ui::JamePromptApp;
+use ui::{JamePromptApp, Message};
+use window_lifecycle::WindowLifecycleAction;
 
-// Embed the app icon directly in the binary (for window icon, not tray)
-const APP_ICON_PNG: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/assets/icons/app_icon.png"
-));
-
-fn window_settings_for_start(
-    start_minimized: bool,
-    icon: Option<window::Icon>,
-) -> window::Settings {
-    let mut settings = window::Settings {
-        size: Size::new(WINDOW_INITIAL_WIDTH, WINDOW_INITIAL_HEIGHT),
-        min_size: Some(Size::new(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)),
-        icon,
-        visible: initial_window_visible(start_minimized),
-        exit_on_close_request: false,
-        ..Default::default()
-    };
-
-    #[cfg(target_os = "linux")]
-    {
-        settings.platform_specific.application_id = APP_ID.into();
+fn update_application(
+    app: &mut JamePromptApp,
+    message: Message,
+    smoke_mode: bool,
+) -> Task<Message> {
+    match window_lifecycle::classify(&message, smoke_mode) {
+        WindowLifecycleAction::Delegate => app.update(message),
+        WindowLifecycleAction::Close(id) => window_lifecycle::close(id),
+        WindowLifecycleAction::Open => window_lifecycle::open()
+            .map(|id| Message::ShowWindow(Some(id))),
+        WindowLifecycleAction::Restore(id) => window_lifecycle::restore(id),
     }
+}
 
-    settings
+fn initial_window_task(start_minimized: bool) -> Task<Message> {
+    if start_minimized {
+        Task::none()
+    } else {
+        window_lifecycle::open().map(|id| Message::ShowWindow(Some(id)))
+    }
 }
 
 fn main() -> iced::Result {
@@ -81,30 +76,20 @@ fn main() -> iced::Result {
         }
     });
 
-    // Load icon using the correct Iced 0.13.1 API
-    let icon = measure("startup.window_icon_load", || {
-        iced::window::icon::from_file_data(
-            APP_ICON_PNG,
-            None, // auto-detect format
-        )
-        .expect("Failed to load app icon from embedded PNG")
-    });
-
-    let window_settings = window_settings_for_start(start_minimized, Some(icon));
-
-    iced::application(
-        JamePromptApp::title,
-        JamePromptApp::update,
-        JamePromptApp::view,
+    iced::daemon(
+        APP_NAME,
+        move |app, message| update_application(app, message, ui_smoke),
+        |app, _window_id| app.view(),
     )
-    .theme(JamePromptApp::theme)
+    .theme(|app, _window_id| app.theme())
     .font(icon::FONT)
     .subscription(JamePromptApp::subscription)
-    .window(window_settings)
-    .centered()
     .run_with(move || {
         measure("startup.app_state", || {
-            JamePromptApp::new_with_hidden_start(start_minimized, ui_smoke)
+            let (app, startup_task) =
+                JamePromptApp::new_with_hidden_start(start_minimized, ui_smoke);
+            let window_task = initial_window_task(start_minimized);
+            (app, Task::batch([startup_task, window_task]))
         })
     })
 }
@@ -113,7 +98,7 @@ fn main() -> iced::Result {
 mod tests {
     use super::*;
     use crate::launch::{
-        should_run_perf_smoke_from_args, should_run_ui_smoke_from_args,
+        initial_window_visible, should_run_perf_smoke_from_args, should_run_ui_smoke_from_args,
         should_show_window_after_hidden_start, should_start_minimized_from_args,
     };
     use std::ffi::OsString;
@@ -181,29 +166,6 @@ mod tests {
     #[test]
     fn initial_window_visibility_is_visible_for_manual_launch() {
         assert!(initial_window_visible(false));
-    }
-
-    #[test]
-    fn window_settings_has_initial_size() {
-        let settings = window_settings_for_start(false, None);
-
-        assert_eq!(
-            settings.size,
-            Size::new(config::WINDOW_INITIAL_WIDTH, config::WINDOW_INITIAL_HEIGHT)
-        );
-    }
-
-    #[test]
-    fn window_settings_has_minimum_size() {
-        let settings = window_settings_for_start(false, None);
-
-        assert_eq!(
-            settings.min_size,
-            Some(Size::new(
-                config::WINDOW_MIN_WIDTH,
-                config::WINDOW_MIN_HEIGHT
-            ))
-        );
     }
 
     #[test]
