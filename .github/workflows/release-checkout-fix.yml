@@ -1,0 +1,59 @@
+name: Release Checkout Fix Validation
+
+on:
+  push:
+    branches:
+      - "automation/release-checkout-fix"
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-materialize:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: automation/release-checkout-fix
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libx11-dev \
+            libxtst-dev \
+            libxkbcommon-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            libxdo-dev \
+            python3-pil \
+            desktop-file-utils
+
+      - name: Apply release checkout patch
+        run: python3 scripts/apply_release_checkout_fix.py
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run packaging contract tests
+        run: cargo test --locked --test packaging_metadata
+
+      - name: Run full tests
+        run: cargo test --locked
+
+      - name: Validate diff
+        run: git diff --check
+
+      - name: Materialize validated release fix
+        run: |
+          git rm .github/workflows/release-checkout-fix.yml
+          git rm scripts/apply_release_checkout_fix.py
+          git diff --check
+          git config user.name "Roy Mejía"
+          git config user.email "54757516+roymejia2217@users.noreply.github.com"
+          git add .github/workflows/release.yml tests/packaging_metadata.rs
+          git commit -m "fix(release): checkout staging scripts"
+          git push origin HEAD:automation/release-checkout-fix
