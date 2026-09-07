@@ -98,6 +98,7 @@ pub enum Message {
     EditPressed(PromptId),
     FavoriteToggled(PromptId, bool),
     HotkeyTick,
+    HotkeyPasteRequested,
     // New prompt form
     FormNameChanged(String),
     FormContentEdited(iced::widget::text_editor::Action),
@@ -974,14 +975,21 @@ impl JamePromptApp {
                         if let Some(prompt_id) = self.hotkey_ids.get(&hotkey_id) {
                             if let Some(p) = self.prompt_cloned_by_id(prompt_id) {
                                 self.status_message = format!("Hotkey: pasting \"{}\"", p.name);
-                                crate::hotkeys::paste_to_active_window();
                                 let _ = self.db.record_use(&p.id);
                                 self.sync_prompt_cache_from_db(&p.id);
-                                return iced::clipboard::write(p.content.clone());
+                                return iced::clipboard::write(p.content.clone()).chain(
+                                    Task::perform(
+                                        async move {
+                                            crate::hotkeys::paste_to_active_window();
+                                        },
+                                        |_| Message::HotkeyPasteRequested,
+                                    ),
+                                );
                             }
                         }
                     }
                 }
+                Message::HotkeyPasteRequested => {}
                 Message::FormNameChanged(name) => {
                     if let Some(ref mut form) = self.new_form {
                         form.name = name;
