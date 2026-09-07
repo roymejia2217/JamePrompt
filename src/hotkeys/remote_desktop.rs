@@ -7,7 +7,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::{mpsc, OnceLock};
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -34,7 +34,11 @@ const STATE_RELEASED: u32 = 0;
 const STATE_PRESSED: u32 = 1;
 const PERMISSION_STATE_FILE: &str = "wayland-portal.json";
 
-static PASTE_WORKER: OnceLock<Option<mpsc::Sender<()>>> = OnceLock::new();
+static PASTE_WORKER: OnceLock<Mutex<Option<mpsc::Sender<()>>>> = OnceLock::new();
+
+fn worker_slot() -> &'static Mutex<Option<mpsc::Sender<()>>> {
+    PASTE_WORKER.get_or_init(|| Mutex::new(None))
+}
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 struct PortalPermissionState {
@@ -96,13 +100,32 @@ impl RemoteDesktopState {
 }
 
 pub(super) fn paste_to_active_window() {
-    let Some(sender) = PASTE_WORKER.get_or_init(start_worker).as_ref() else {
-        tracing::warn!("Wayland automatic paste worker could not be started");
-        return;
+    let slot = worker_slot();
+    let mut sender_guard = match slot.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
     };
 
-    if sender.send(()).is_err() {
-        tracing::warn!("Wayland automatic paste worker is unavailable");
+    if let Some(sender) = sender_guard.as_ref() {
+        if sender.send(()).is_ok() {
+            return;
+        }
+        tracing::warn!("Wayland automatic paste worker was disconnected; restarting worker");
+        *sender_guard = None;
+    }
+
+    match start_worker() {
+        Some(sender) => {
+            if let Err(error) = sender.send(()) {
+                tracing::warn!("Wayland automatic paste worker is unavailable: {error}");
+                *sender_guard = None;
+            } else {
+                *sender_guard = Some(sender);
+            }
+        }
+        None => {
+            tracing::warn!("Wayland automatic paste worker could not be started");
+        }
     }
 }
 
@@ -153,8 +176,14 @@ fn remote_desktop_worker(rx: mpsc::Receiver<()>) {
         Ok::<(), String>(())
     });
 
-    if let Err(error) = result {
-        tracing::warn!("Wayland automatic paste worker stopped: {error}");
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            tracing::warn!("Wayland automatic paste worker stopped: {error}");
+        }
+        Err(error) => {
+            tracing::warn!("Wayland automatic paste worker stopped: {error}");
+        }
     }
 }
 
