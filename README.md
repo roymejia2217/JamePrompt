@@ -65,9 +65,9 @@ cargo build --release --locked
 | **Python 3 Pillow** | Generates hicolor launcher icon sizes during Debian packaging. | `sudo apt-get install python3-pil` |
 
 **Notes:**
-- Global hotkeys and paste simulation are X11-oriented.
+- Global hotkeys on Wayland use the XDG GlobalShortcuts portal; auto-paste requires the RemoteDesktop keyboard permission dialog once.
+- Tray hide preserves the existing window without recreating it on restore.
 - Tray visibility depends on the desktop environment having an active AppIndicator or status notifier implementation.
-- Wayland sessions may restrict global hotkeys and paste simulation.
 
 ---
 
