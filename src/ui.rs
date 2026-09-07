@@ -832,12 +832,15 @@ impl JamePromptApp {
         self.window_open_pending = false;
     }
 
-    #[cfg(test)]
     pub(crate) fn record_window_closed(&mut self, id: iced::window::Id) {
         if self.main_window_id == Some(id) {
             self.main_window_id = None;
         }
         self.window_open_pending = false;
+    }
+
+    pub(crate) fn is_smoke_mode(&self) -> bool {
+        self.smoke_mode
     }
 
     pub fn theme(&self) -> Theme {
@@ -1326,14 +1329,13 @@ impl JamePromptApp {
                 }
                 // Tray: Window close requested -> hide to tray
                 Message::CloseRequested(id) => {
-                    self.main_window_id = Some(id);
+                    self.record_window_closed(id);
                     if should_exit_on_close_request(self.smoke_mode) {
                         self.status_message = format!("{APP_NAME} smoke run exiting");
                         return iced::exit();
                     }
 
                     self.status_message = format!("{APP_NAME} is still running in the system tray");
-                    return iced::window::change_mode(id, iced::window::Mode::Hidden);
                 }
                 Message::ShowWindow(id) => {
                     if let Some(id) = id.or(self.main_window_id) {
@@ -1343,6 +1345,11 @@ impl JamePromptApp {
                             iced::window::change_mode(id, iced::window::Mode::Windowed),
                             iced::window::gain_focus(id),
                         ]);
+                    }
+
+                    if self.begin_window_open() {
+                        return crate::window_lifecycle::open()
+                            .map(|id| Message::ShowWindow(Some(id)));
                     }
 
                     self.status_message = "Unable to restore the window".into();
