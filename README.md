@@ -65,8 +65,8 @@ cargo build --release --locked
 | **Python 3 Pillow** | Generates hicolor launcher icon sizes during Debian packaging. | `sudo apt-get install python3-pil` |
 
 **Notes:**
-- Global hotkeys on Wayland use the XDG GlobalShortcuts portal; auto-paste requires the RemoteDesktop keyboard permission dialog once.
-- Tray hide preserves the existing window without recreating it on restore.
+- On GNOME Wayland, tray uses destroy/recreate (Hidden unsupported); auto-paste needs RemoteDesktop keyboard permission (dialog may appear at start/prewarm).
+- Global hotkeys on Wayland use the XDG GlobalShortcuts portal.
 - Tray visibility depends on the desktop environment having an active AppIndicator or status notifier implementation.
 
 ---
