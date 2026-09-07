@@ -7,6 +7,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -34,9 +35,25 @@ const STATE_RELEASED: u32 = 0;
 const STATE_PRESSED: u32 = 1;
 const PERMISSION_STATE_FILE: &str = "wayland-portal.json";
 
-static PASTE_WORKER: OnceLock<Mutex<Option<mpsc::Sender<()>>>> = OnceLock::new();
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkerCommand {
+    Prewarm,
+    Paste,
+}
 
-fn worker_slot() -> &'static Mutex<Option<mpsc::Sender<()>>> {
+static PERMISSION_DENIED: AtomicBool = AtomicBool::new(false);
+
+fn set_permission_denied(denied: bool) {
+    PERMISSION_DENIED.store(denied, Ordering::Relaxed);
+}
+
+pub(crate) fn is_permission_denied() -> bool {
+    PERMISSION_DENIED.load(Ordering::Relaxed)
+}
+
+static PASTE_WORKER: OnceLock<Mutex<Option<mpsc::Sender<WorkerCommand>>>> = OnceLock::new();
+
+fn worker_slot() -> &'static Mutex<Option<mpsc::Sender<WorkerCommand>>> {
     PASTE_WORKER.get_or_init(|| Mutex::new(None))
 }
 
@@ -99,7 +116,7 @@ impl RemoteDesktopState {
     }
 }
 
-pub(super) fn paste_to_active_window() {
+fn send_command(command: WorkerCommand) {
     let slot = worker_slot();
     let mut sender_guard = match slot.lock() {
         Ok(guard) => guard,
@@ -107,7 +124,7 @@ pub(super) fn paste_to_active_window() {
     };
 
     if let Some(sender) = sender_guard.as_ref() {
-        if sender.send(()).is_ok() {
+        if sender.send(command).is_ok() {
             return;
         }
         tracing::warn!("Wayland automatic paste worker was disconnected; restarting worker");
@@ -116,7 +133,8 @@ pub(super) fn paste_to_active_window() {
 
     match start_worker() {
         Some(sender) => {
-            if let Err(error) = sender.send(()) {
+            if let Err(error) = sender.send(command) {
+                set_permission_denied(true);
                 tracing::warn!("Wayland automatic paste worker is unavailable: {error}");
                 *sender_guard = None;
             } else {
@@ -124,12 +142,21 @@ pub(super) fn paste_to_active_window() {
             }
         }
         None => {
+            set_permission_denied(true);
             tracing::warn!("Wayland automatic paste worker could not be started");
         }
     }
 }
 
-fn start_worker() -> Option<mpsc::Sender<()>> {
+pub fn prewarm_permission() {
+    send_command(WorkerCommand::Prewarm);
+}
+
+pub(super) fn paste_to_active_window() {
+    send_command(WorkerCommand::Paste);
+}
+
+fn start_worker() -> Option<mpsc::Sender<WorkerCommand>> {
     let (tx, rx) = mpsc::channel();
     thread::Builder::new()
         .name("jameprompt-wayland-paste".into())
@@ -138,7 +165,7 @@ fn start_worker() -> Option<mpsc::Sender<()>> {
     Some(tx)
 }
 
-fn remote_desktop_worker(rx: mpsc::Receiver<()>) {
+fn remote_desktop_worker(rx: mpsc::Receiver<WorkerCommand>) {
     let context = glib::MainContext::new();
     let result = context.with_thread_default(|| {
         let connection = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE)
@@ -147,28 +174,60 @@ fn remote_desktop_worker(rx: mpsc::Receiver<()>) {
         ensure_remote_desktop_available(&connection)?;
 
         let mut state = RemoteDesktopState::load();
-        while rx.recv().is_ok() {
-            thread::sleep(PASTE_DELAY);
+        while let Ok(command) = rx.recv() {
+            match command {
+                WorkerCommand::Prewarm => {
+                    if !state.can_retry() {
+                        tracing::debug!(
+                            "Skipping Wayland RemoteDesktop prewarm during permission retry cooldown"
+                        );
+                        continue;
+                    }
 
-            if !state.can_retry() {
-                tracing::debug!(
-                    "Skipping Wayland automatic paste during permission retry cooldown"
-                );
-                continue;
-            }
-
-            let session = match state.ensure_session(&context, &connection) {
-                Ok(session) => session.to_string(),
-                Err(error) => {
-                    tracing::warn!("Wayland automatic paste permission unavailable: {error}");
-                    state.mark_retry_cooldown();
-                    continue;
+                    match state.ensure_session(&context, &connection) {
+                        Ok(_) => {
+                            set_permission_denied(false);
+                            tracing::info!("Wayland RemoteDesktop keyboard permission prewarmed");
+                        }
+                        Err(error) => {
+                            set_permission_denied(true);
+                            tracing::warn!(
+                                "Wayland RemoteDesktop prewarm permission unavailable: {error}"
+                            );
+                            state.mark_retry_cooldown();
+                        }
+                    }
                 }
-            };
+                WorkerCommand::Paste => {
+                    thread::sleep(PASTE_DELAY);
 
-            if let Err(error) = paste_ctrl_v(&connection, &session) {
-                tracing::warn!("Wayland automatic paste failed: {error}");
-                state.invalidate_session(&connection);
+                    if !state.can_retry() {
+                        set_permission_denied(true);
+                        tracing::debug!(
+                            "Skipping Wayland automatic paste during permission retry cooldown"
+                        );
+                        continue;
+                    }
+
+                    let session = match state.ensure_session(&context, &connection) {
+                        Ok(session) => {
+                            set_permission_denied(false);
+                            session.to_string()
+                        }
+                        Err(error) => {
+                            set_permission_denied(true);
+                            tracing::warn!("Wayland automatic paste permission unavailable: {error}");
+                            state.mark_retry_cooldown();
+                            continue;
+                        }
+                    };
+
+                    if let Err(error) = paste_ctrl_v(&connection, &session) {
+                        set_permission_denied(true);
+                        tracing::warn!("Wayland automatic paste failed: {error}");
+                        state.invalidate_session(&connection);
+                    }
+                }
             }
         }
 
@@ -179,9 +238,11 @@ fn remote_desktop_worker(rx: mpsc::Receiver<()>) {
     match result {
         Ok(Ok(())) => {}
         Ok(Err(error)) => {
+            set_permission_denied(true);
             tracing::warn!("Wayland automatic paste worker stopped: {error}");
         }
         Err(error) => {
+            set_permission_denied(true);
             tracing::warn!("Wayland automatic paste worker stopped: {error}");
         }
     }
@@ -623,5 +684,13 @@ mod tests {
             load_permission_state(&path),
             PortalPermissionState::default()
         );
+    }
+
+    #[test]
+    fn permission_denied_flag_can_be_queried_and_updated() {
+        set_permission_denied(true);
+        assert!(is_permission_denied());
+        set_permission_denied(false);
+        assert!(!is_permission_denied());
     }
 }

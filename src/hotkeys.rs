@@ -165,6 +165,29 @@ pub fn paste_to_active_window() {
     });
 }
 
+#[cfg(target_os = "linux")]
+pub fn prewarm_permission() {
+    if crate::platform::display_server() == crate::platform::DisplayServer::Wayland {
+        remote_desktop::prewarm_permission();
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn prewarm_permission() {}
+
+#[cfg(target_os = "linux")]
+pub fn is_paste_permission_denied() -> bool {
+    if crate::platform::display_server() == crate::platform::DisplayServer::Wayland {
+        return remote_desktop::is_permission_denied();
+    }
+    false
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn is_paste_permission_denied() -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

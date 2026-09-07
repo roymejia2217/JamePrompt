@@ -262,6 +262,9 @@ impl Default for JamePromptApp {
                 }
             }
         });
+        if settings.hotkeys_enabled {
+            crate::hotkeys::prewarm_permission();
+        }
 
         let prompt_count = all_prompts.len();
         let prompt_by_id = Self::build_prompt_index(&all_prompts);
@@ -974,7 +977,14 @@ impl JamePromptApp {
                     for hotkey_id in triggered {
                         if let Some(prompt_id) = self.hotkey_ids.get(&hotkey_id) {
                             if let Some(p) = self.prompt_cloned_by_id(prompt_id) {
-                                self.status_message = format!("Hotkey: pasting \"{}\"", p.name);
+                                if crate::hotkeys::is_paste_permission_denied() {
+                                    self.status_message = format!(
+                                        "Copied \"{}\" (auto-paste unavailable — grant Remote Desktop keyboard access)",
+                                        p.name
+                                    );
+                                } else {
+                                    self.status_message = format!("Hotkey: pasting \"{}\"", p.name);
+                                }
                                 let _ = self.db.record_use(&p.id);
                                 self.sync_prompt_cache_from_db(&p.id);
                                 return iced::clipboard::write(p.content.clone()).chain(
@@ -1194,6 +1204,7 @@ impl JamePromptApp {
                         self.hotkey_ids.clear();
                         self.status_message = "All hotkeys disabled".into();
                     } else {
+                        crate::hotkeys::prewarm_permission();
                         // Re-register all enabled prompts
                         if let Some(ref svc) = self.hotkey_service {
                             for p in &self.all_prompts {
