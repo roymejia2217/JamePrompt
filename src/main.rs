@@ -38,11 +38,6 @@ fn title_application(app: &JamePromptApp, _window_id: window::Id) -> String {
 fn update_application(app: &mut JamePromptApp, message: Message) -> Task<Message> {
     match window_lifecycle::classify(&message) {
         WindowLifecycleAction::Delegate => app.update(message),
-        WindowLifecycleAction::Close(_id) if app.is_smoke_mode() => app.update(message),
-        WindowLifecycleAction::Close(id) => {
-            app.record_window_closed(id);
-            window_lifecycle::close(id)
-        }
         WindowLifecycleAction::Open => {
             if app.begin_window_open() {
                 window_lifecycle::open().map(|id| Message::ShowWindow(Some(id)))

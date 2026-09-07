@@ -13,14 +13,12 @@ const APP_ICON_PNG: &[u8] = include_bytes!(concat!(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowLifecycleAction {
     Delegate,
-    Close(window::Id),
     Open,
     Restore(window::Id),
 }
 
 pub(crate) fn classify(message: &Message) -> WindowLifecycleAction {
     match message {
-        Message::CloseRequested(id) => WindowLifecycleAction::Close(*id),
         Message::ShowWindow(None) => WindowLifecycleAction::Open,
         Message::ShowWindow(Some(id)) => WindowLifecycleAction::Restore(*id),
         _ => WindowLifecycleAction::Delegate,
@@ -54,10 +52,6 @@ pub(crate) fn open() -> Task<window::Id> {
     task
 }
 
-pub(crate) fn close(id: window::Id) -> Task<Message> {
-    window::close(id)
-}
-
 pub(crate) fn restore(id: window::Id) -> Task<Message> {
     Task::batch([
         window::change_mode(id, window::Mode::Windowed),
@@ -70,12 +64,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn close_request_closes_the_window() {
+    fn close_request_is_delegated_to_application() {
         let id = window::Id::unique();
 
         assert_eq!(
             classify(&Message::CloseRequested(id)),
-            WindowLifecycleAction::Close(id)
+            WindowLifecycleAction::Delegate
         );
     }
 

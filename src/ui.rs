@@ -832,15 +832,12 @@ impl JamePromptApp {
         self.window_open_pending = false;
     }
 
+    #[cfg(test)]
     pub(crate) fn record_window_closed(&mut self, id: iced::window::Id) {
         if self.main_window_id == Some(id) {
             self.main_window_id = None;
         }
         self.window_open_pending = false;
-    }
-
-    pub(crate) fn is_smoke_mode(&self) -> bool {
-        self.smoke_mode
     }
 
     pub fn theme(&self) -> Theme {
