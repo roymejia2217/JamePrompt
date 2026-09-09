@@ -98,7 +98,6 @@ pub enum Message {
     EditPressed(PromptId),
     FavoriteToggled(PromptId, bool),
     HotkeyTick,
-    HotkeyPasteRequested,
     // New prompt form
     FormNameChanged(String),
     FormContentEdited(iced::widget::text_editor::Action),
@@ -201,6 +200,7 @@ pub struct JamePromptApp {
     settings: Settings,
     hotkey_service: Option<Arc<HotkeyService>>,
     hotkey_ids: HashMap<u32, PromptId>,
+    pending_hotkey_name: Option<String>,
     prompt_by_id: HashMap<PromptId, Prompt>,
     new_form: Option<NewPromptForm>,
     show_settings: bool,
@@ -218,6 +218,17 @@ pub struct JamePromptApp {
     smoke_deadline: Option<Instant>,
     // Tray fields
     tray: Option<TrayHandle>,
+}
+
+fn hotkey_paste_status(name: &str, outcome: crate::hotkeys::PasteOutcome) -> String {
+    match outcome {
+        crate::hotkeys::PasteOutcome::ClipboardTransferred => {
+            format!("Hotkey: clipboard transfer completed for \"{name}\"")
+        }
+        crate::hotkeys::PasteOutcome::Failed => {
+            format!("Hotkey: automatic paste failed or timed out for \"{name}\"")
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -292,6 +303,7 @@ impl Default for JamePromptApp {
             settings,
             hotkey_service,
             hotkey_ids,
+            pending_hotkey_name: None,
             prompt_by_id,
             new_form: None,
             show_settings: false,
@@ -332,6 +344,7 @@ impl JamePromptApp {
             settings: Settings::default(),
             hotkey_service: None,
             hotkey_ids: HashMap::new(),
+            pending_hotkey_name: None,
             prompt_by_id,
             new_form: None,
             show_settings: false,
@@ -384,9 +397,9 @@ impl JamePromptApp {
         perf::measure("ui.refresh_prompts", || {
             self.prompts = self.visible_prompts_for_query(&self.current_query());
             if let Some(selected_id) = &self.selected_id {
-                if !self.prompt_by_id.contains_key(selected_id) {
-                    self.selected_id = None;
-                } else if !self.prompts.iter().any(|p| &p.id == selected_id) {
+                if !self.prompt_by_id.contains_key(selected_id)
+                    || !self.prompts.iter().any(|p| &p.id == selected_id)
+                {
                     self.selected_id = None;
                 }
             }
@@ -452,7 +465,7 @@ impl JamePromptApp {
         };
         let name = prompt.name.to_lowercase();
         let content = prompt.content.to_lowercase();
-        name.contains(&needle) || content.contains(&needle)
+        name.contains(needle) || content.contains(needle)
     }
 
     fn sort_prompts(&self, prompts: &mut [Prompt], sort: PromptSort) {
@@ -766,6 +779,7 @@ impl JamePromptApp {
             settings: Settings::default(),
             hotkey_service: None,
             hotkey_ids: HashMap::new(),
+            pending_hotkey_name: None,
             prompt_by_id,
             new_form: None,
             show_settings: false,
@@ -973,33 +987,28 @@ impl JamePromptApp {
                     }
                 }
                 Message::HotkeyTick => {
-                    let triggered = HotkeyService::poll_events();
-                    for hotkey_id in triggered {
+                    if let Some(outcome) = crate::hotkeys::poll_paste_outcome() {
+                        if let Some(name) = self.pending_hotkey_name.take() {
+                            self.status_message = hotkey_paste_status(&name, outcome);
+                        }
+                    }
+                    if let Some(hotkey_id) = HotkeyService::poll_event() {
                         if let Some(prompt_id) = self.hotkey_ids.get(&hotkey_id) {
                             if let Some(p) = self.prompt_cloned_by_id(prompt_id) {
-                                if crate::hotkeys::is_paste_permission_denied() {
-                                    self.status_message = format!(
-                                        "Copied \"{}\" (auto-paste unavailable — grant Remote Desktop keyboard access)",
-                                        p.name
-                                    );
+                                let requested = crate::hotkeys::paste_to_active_window(p.content);
+                                self.status_message = if !requested {
+                                    "Hotkey: automatic paste already in progress".into()
+                                } else if crate::hotkeys::is_paste_permission_denied() {
+                                    "Hotkey: automatic paste unavailable — grant Remote Desktop and Clipboard access".into()
                                 } else {
-                                    self.status_message = format!("Hotkey: pasting \"{}\"", p.name);
-                                }
-                                let _ = self.db.record_use(&p.id);
-                                self.sync_prompt_cache_from_db(&p.id);
-                                return iced::clipboard::write(p.content.clone()).chain(
-                                    Task::perform(
-                                        async move {
-                                            crate::hotkeys::paste_to_active_window();
-                                        },
-                                        |_| Message::HotkeyPasteRequested,
-                                    ),
-                                );
+                                    self.pending_hotkey_name = Some(p.name.clone());
+                                    format!("Hotkey: requested automatic paste for \"{}\"", p.name)
+                                };
+                                return Task::none();
                             }
                         }
                     }
                 }
-                Message::HotkeyPasteRequested => {}
                 Message::FormNameChanged(name) => {
                     if let Some(ref mut form) = self.new_form {
                         form.name = name;
@@ -2647,16 +2656,28 @@ mod tests {
 
     #[test]
     fn test_prompt_toolbar_spacing_separates_primary_and_secondary_controls() {
-        assert!(PROMPT_PRIMARY_TOOLBAR_SPACING > 0);
-        assert!(PROMPT_SECONDARY_TOOLBAR_SPACING > 0);
-        assert!(PROMPT_PRIMARY_TOOLBAR_SPACING >= PROMPT_SECONDARY_TOOLBAR_SPACING);
+        const {
+            assert!(PROMPT_PRIMARY_TOOLBAR_SPACING > 0);
+        }
+        const {
+            assert!(PROMPT_SECONDARY_TOOLBAR_SPACING > 0);
+        }
+        const {
+            assert!(PROMPT_PRIMARY_TOOLBAR_SPACING >= PROMPT_SECONDARY_TOOLBAR_SPACING);
+        }
     }
 
     #[test]
     fn test_prompt_toolbar_picker_widths_are_stable() {
-        assert!(PROMPT_FILTER_PICKER_WIDTH >= 100.0);
-        assert!(PROMPT_SORT_PICKER_WIDTH >= 150.0);
-        assert!(PROMPT_SORT_PICKER_WIDTH > PROMPT_FILTER_PICKER_WIDTH);
+        const {
+            assert!(PROMPT_FILTER_PICKER_WIDTH >= 100.0);
+        }
+        const {
+            assert!(PROMPT_SORT_PICKER_WIDTH >= 150.0);
+        }
+        const {
+            assert!(PROMPT_SORT_PICKER_WIDTH > PROMPT_FILTER_PICKER_WIDTH);
+        }
     }
 
     #[test]
@@ -2722,8 +2743,12 @@ mod tests {
 
     #[test]
     fn test_prompt_list_favorite_indicator_width_is_stable() {
-        assert!(PROMPT_LIST_FAVORITE_INDICATOR_WIDTH >= 20.0);
-        assert!(PROMPT_LIST_FAVORITE_INDICATOR_WIDTH <= 32.0);
+        const {
+            assert!(PROMPT_LIST_FAVORITE_INDICATOR_WIDTH >= 20.0);
+        }
+        const {
+            assert!(PROMPT_LIST_FAVORITE_INDICATOR_WIDTH <= 32.0);
+        }
     }
 
     #[test]
@@ -3241,7 +3266,6 @@ mod tests {
                 updated_at: String::new(),
                 last_used_at: None,
                 use_count: 0,
-                ..Prompt::default()
             })
             .expect("Insert should succeed");
         let mut app = JamePromptApp::with_database(db);
@@ -3267,7 +3291,6 @@ mod tests {
                 updated_at: String::new(),
                 last_used_at: None,
                 use_count: 0,
-                ..Prompt::default()
             })
             .expect("Insert should succeed");
         let mut app = JamePromptApp::with_database(db);
@@ -3301,7 +3324,6 @@ mod tests {
                 updated_at: String::new(),
                 last_used_at: None,
                 use_count: 0,
-                ..Prompt::default()
             })
             .expect("Insert should succeed");
         let mut app = JamePromptApp::with_database(db);
@@ -3333,7 +3355,6 @@ mod tests {
             updated_at: String::new(),
             last_used_at: None,
             use_count: 0,
-            ..Prompt::default()
         })
         .expect("Insert should succeed");
         db.insert(&Prompt {
@@ -3347,7 +3368,6 @@ mod tests {
             updated_at: String::new(),
             last_used_at: None,
             use_count: 0,
-            ..Prompt::default()
         })
         .expect("Insert should succeed");
 
@@ -3373,7 +3393,6 @@ mod tests {
             updated_at: String::new(),
             last_used_at: None,
             use_count: 0,
-            ..Prompt::default()
         })
         .expect("Insert should succeed");
 
@@ -3398,7 +3417,6 @@ mod tests {
             updated_at: String::new(),
             last_used_at: None,
             use_count: 1,
-            ..Prompt::default()
         })
         .expect("Insert should succeed");
         db.insert(&Prompt {
@@ -3412,7 +3430,6 @@ mod tests {
             updated_at: String::new(),
             last_used_at: None,
             use_count: 10,
-            ..Prompt::default()
         })
         .expect("Insert should succeed");
 
@@ -3439,7 +3456,6 @@ mod tests {
                 updated_at: String::new(),
                 last_used_at: None,
                 use_count: 0,
-                ..Prompt::default()
             })
             .expect("Insert should succeed");
         let mut app = JamePromptApp::with_database(db);
@@ -3531,7 +3547,6 @@ mod tests {
             updated_at: String::new(),
             last_used_at: None,
             use_count: 0,
-            ..Prompt::default()
         })
         .expect("Insert should succeed");
         let mut app = JamePromptApp::with_database(db);
@@ -3557,7 +3572,6 @@ mod tests {
             updated_at: String::new(),
             last_used_at: None,
             use_count: 0,
-            ..Prompt::default()
         })
         .expect("Insert should succeed");
         let mut app = JamePromptApp::with_database(db);
@@ -3597,7 +3611,6 @@ mod tests {
             updated_at: String::new(),
             last_used_at: None,
             use_count: 0,
-            ..Prompt::default()
         })
         .expect("Insert should succeed");
         let app = JamePromptApp::with_database(db);
@@ -3626,7 +3639,6 @@ mod tests {
             updated_at: String::new(),
             last_used_at: None,
             use_count: 0,
-            ..Prompt::default()
         })
         .expect("Insert should succeed");
         let mut app = JamePromptApp::with_database(db);
@@ -3672,7 +3684,6 @@ mod tests {
             updated_at: String::new(),
             last_used_at: None,
             use_count: 0,
-            ..Prompt::default()
         })
         .expect("Insert should succeed");
         let mut app = JamePromptApp::with_database(db);
@@ -3689,7 +3700,6 @@ mod tests {
                 updated_at: String::new(),
                 last_used_at: None,
                 use_count: 0,
-                ..Prompt::default()
             }],
         ));
         app.pending_import_preview = Some(PromptImportPreview {
@@ -3718,7 +3728,6 @@ mod tests {
             updated_at: String::new(),
             last_used_at: None,
             use_count: 0,
-            ..Prompt::default()
         })
         .expect("Insert should succeed");
         let mut app = JamePromptApp::with_database(db);
@@ -3751,5 +3760,17 @@ mod tests {
         assert_eq!(imported.name, "Imported");
         assert!(imported.favorite);
         assert_eq!(imported.use_count, 3);
+    }
+
+    #[test]
+    fn hotkey_paste_status_reports_outcomes() {
+        assert_eq!(
+            hotkey_paste_status("Demo", crate::hotkeys::PasteOutcome::ClipboardTransferred),
+            "Hotkey: clipboard transfer completed for \"Demo\""
+        );
+        assert_eq!(
+            hotkey_paste_status("Demo", crate::hotkeys::PasteOutcome::Failed),
+            "Hotkey: automatic paste failed or timed out for \"Demo\""
+        );
     }
 }

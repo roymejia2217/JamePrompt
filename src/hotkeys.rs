@@ -4,6 +4,10 @@ use iced::keyboard::{key::Named, Key, Modifiers};
 use crate::perf;
 use crate::platform::HotkeyBackendKind;
 
+#[cfg(target_os = "linux")]
+mod clipboard_transfer;
+#[cfg(target_os = "linux")]
+mod connection;
 mod native;
 #[cfg(target_os = "linux")]
 mod portal;
@@ -102,6 +106,12 @@ pub fn validate_hotkey(hotkey_str: &str) -> bool {
     hotkey_str.parse::<HotKey>().is_ok()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasteOutcome {
+    ClipboardTransferred,
+    Failed,
+}
+
 enum HotkeyBackend {
     Native(native::NativeHotkeyService),
     #[cfg(target_os = "linux")]
@@ -141,12 +151,15 @@ impl HotkeyService {
         })
     }
 
-    pub fn poll_events() -> Vec<u32> {
-        perf::measure("hotkeys.poll_events", || {
-            let mut triggered = native::poll_events();
+    pub fn poll_event() -> Option<u32> {
+        perf::measure("hotkeys.poll_event", || {
+            if let Some(event) = native::poll_event() {
+                return Some(event);
+            }
             #[cfg(target_os = "linux")]
-            triggered.extend(portal::poll_events());
-            triggered
+            return portal::poll_event();
+            #[cfg(not(target_os = "linux"))]
+            None
         })
     }
 }
@@ -154,15 +167,24 @@ impl HotkeyService {
 /// Injects Ctrl+V into the previously active application using the platform
 /// backend. Native platforms keep the existing rdev path. Wayland uses the
 /// permissioned XDG RemoteDesktop portal and never falls back to X11 injection.
-pub fn paste_to_active_window() {
+pub fn paste_to_active_window(content: String) -> bool {
     perf::measure("hotkeys.paste_to_active_window_spawn", || {
         #[cfg(target_os = "linux")]
         if crate::platform::display_server() == crate::platform::DisplayServer::Wayland {
-            remote_desktop::paste_to_active_window();
-            return;
+            return remote_desktop::paste_to_active_window(content);
         }
+        let _ = content;
         native::paste_to_active_window();
-    });
+        true
+    })
+}
+
+pub fn poll_paste_outcome() -> Option<PasteOutcome> {
+    #[cfg(target_os = "linux")]
+    if crate::platform::display_server() == crate::platform::DisplayServer::Wayland {
+        return remote_desktop::poll_paste_outcome();
+    }
+    None
 }
 
 #[cfg(target_os = "linux")]

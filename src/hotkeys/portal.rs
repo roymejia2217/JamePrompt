@@ -2,7 +2,7 @@ use crate::config::LINUX_DESKTOP_APP_ID;
 use gtk::glib::variant::{ObjectPath, ToVariant};
 use gtk::{gio, glib};
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
@@ -19,12 +19,34 @@ const SESSION_INTERFACE: &str = "org.freedesktop.portal.Session";
 const PORTAL_CALL_TIMEOUT_MS: i32 = 5_000;
 const PORTAL_RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);
 const REBIND_DEBOUNCE: Duration = Duration::from_millis(300);
+const MAX_PENDING_EVENTS: usize = 64;
 
 #[derive(Debug, Clone)]
 struct PortalBinding {
     shortcut_id: String,
     preferred_trigger: String,
     description: String,
+}
+
+#[derive(Default)]
+struct ActiveRoutes {
+    session: Option<String>,
+    routes: HashMap<String, u32>,
+}
+
+fn activated_route(active: &ActiveRoutes, session: &str, shortcut_id: &str) -> Option<u32> {
+    if active.session.as_deref() != Some(session) {
+        return None;
+    }
+    active.routes.get(shortcut_id).copied()
+}
+
+fn clear_closed_session(active: &mut ActiveRoutes, session: &str) -> bool {
+    if active.session.as_deref() != Some(session) {
+        return false;
+    }
+    *active = ActiveRoutes::default();
+    true
 }
 
 pub(super) struct PortalHotkeyService {
@@ -37,7 +59,7 @@ pub(super) struct PortalHotkeyService {
 impl PortalHotkeyService {
     pub(super) fn new() -> Option<Self> {
         let bindings = Arc::new(Mutex::new(HashMap::new()));
-        let active_routes = Arc::new(Mutex::new(HashMap::new()));
+        let active_routes = Arc::new(Mutex::new(ActiveRoutes::default()));
         let (refresh_tx, refresh_rx) = mpsc::channel();
         let (init_tx, init_rx) = mpsc::sync_channel(1);
         let worker_bindings = Arc::clone(&bindings);
@@ -111,44 +133,61 @@ impl PortalHotkeyService {
     }
 }
 
-pub(super) fn poll_events() -> Vec<u32> {
-    let Some(queue) = PORTAL_EVENTS.get() else {
-        return Vec::new();
-    };
-    let Ok(mut queue) = queue.lock() else {
-        return Vec::new();
-    };
-    queue.drain(..).collect()
+pub(super) fn poll_event() -> Option<u32> {
+    let queue = PORTAL_EVENTS.get()?;
+    queue.lock().ok()?.pop_front()
 }
 
 fn event_queue() -> &'static Mutex<VecDeque<u32>> {
     PORTAL_EVENTS.get_or_init(|| Mutex::new(VecDeque::new()))
 }
 
+fn enqueue_event(queue: &mut VecDeque<u32>, id: u32) -> bool {
+    if queue.len() >= MAX_PENDING_EVENTS {
+        return false;
+    }
+    queue.push_back(id);
+    true
+}
+
 static PORTAL_EVENTS: OnceLock<Mutex<VecDeque<u32>>> = OnceLock::new();
 
 fn portal_worker(
     bindings: Arc<Mutex<HashMap<u32, PortalBinding>>>,
-    active_routes: Arc<Mutex<HashMap<String, u32>>>,
+    active_routes: Arc<Mutex<ActiveRoutes>>,
     refresh_rx: mpsc::Receiver<()>,
     init_tx: mpsc::SyncSender<Result<(), String>>,
 ) {
     let context = glib::MainContext::new();
     let result = context.with_thread_default(|| {
-        let connection = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE)
-            .map_err(|error| format!("cannot connect to the session bus: {error}"))?;
+        let connection = super::connection::session_connection()?;
 
         register_host_application(&connection)?;
         ensure_global_shortcuts_available(&connection)?;
+        let (closed_tx, closed_rx) = mpsc::sync_channel(1);
+        subscribe_session_closed(&connection, Arc::clone(&active_routes), closed_tx);
         subscribe_activated(&connection, Arc::clone(&active_routes));
         let _ = init_tx.send(Ok(()));
 
-        run_worker_loop(&context, &connection, bindings, active_routes, refresh_rx);
+        run_worker_loop(
+            &context,
+            &connection,
+            bindings,
+            active_routes,
+            refresh_rx,
+            closed_rx,
+        );
         Ok::<(), String>(())
     });
 
-    if let Err(error) = result {
-        let _ = init_tx.send(Err(error.to_string()));
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            let _ = init_tx.send(Err(error));
+        }
+        Err(error) => {
+            let _ = init_tx.send(Err(error.to_string()));
+        }
     }
 }
 
@@ -156,8 +195,9 @@ fn run_worker_loop(
     context: &glib::MainContext,
     connection: &gio::DBusConnection,
     bindings: Arc<Mutex<HashMap<u32, PortalBinding>>>,
-    active_routes: Arc<Mutex<HashMap<String, u32>>>,
+    active_routes: Arc<Mutex<ActiveRoutes>>,
     refresh_rx: mpsc::Receiver<()>,
+    closed_rx: mpsc::Receiver<String>,
 ) {
     let mut active_session: Option<String> = None;
     let mut pending_refresh: Option<Instant> = None;
@@ -165,6 +205,12 @@ fn run_worker_loop(
     loop {
         while context.pending() {
             context.iteration(false);
+        }
+        while let Ok(closed_session) = closed_rx.try_recv() {
+            if active_session.as_deref() == Some(closed_session.as_str()) {
+                active_session = None;
+                pending_refresh = Some(Instant::now());
+            }
         }
 
         match refresh_rx.recv_timeout(Duration::from_millis(20)) {
@@ -190,19 +236,23 @@ fn run_worker_loop(
                     close_session(connection, &session);
                 }
                 if let Ok(mut routes) = active_routes.lock() {
-                    routes.clear();
+                    *routes = ActiveRoutes::default();
                 }
                 continue;
             }
 
             match create_and_bind_session(context, connection, &snapshot) {
-                Ok(session) => {
+                Ok((session, accepted)) => {
                     let routes = snapshot
                         .iter()
+                        .filter(|(_, binding)| accepted.contains(&binding.shortcut_id))
                         .map(|(id, binding)| (binding.shortcut_id.clone(), *id))
                         .collect();
                     if let Ok(mut active) = active_routes.lock() {
-                        *active = routes;
+                        *active = ActiveRoutes {
+                            session: Some(session.clone()),
+                            routes,
+                        };
                     }
                     if let Some(previous) = active_session.replace(session) {
                         close_session(connection, &previous);
@@ -266,10 +316,7 @@ fn ensure_global_shortcuts_available(connection: &gio::DBusConnection) -> Result
     Ok(())
 }
 
-fn subscribe_activated(
-    connection: &gio::DBusConnection,
-    active_routes: Arc<Mutex<HashMap<String, u32>>>,
-) {
+fn subscribe_activated(connection: &gio::DBusConnection, active_routes: Arc<Mutex<ActiveRoutes>>) {
     #[allow(deprecated)]
     connection.signal_subscribe(
         Some(PORTAL_BUS),
@@ -282,6 +329,9 @@ fn subscribe_activated(
             if parameters.n_children() < 2 {
                 return;
             }
+            let Some(session) = parameters.child_value(0).get::<ObjectPath>() else {
+                return;
+            };
             let shortcut_id = parameters.child_value(1);
             let Some(shortcut_id) = shortcut_id.str() else {
                 return;
@@ -290,13 +340,41 @@ fn subscribe_activated(
                 let Ok(routes) = active_routes.lock() else {
                     return;
                 };
-                let Some(id) = routes.get(shortcut_id).copied() else {
+                let Some(id) = activated_route(&routes, session.as_str(), shortcut_id) else {
                     return;
                 };
                 id
             };
             if let Ok(mut queue) = event_queue().lock() {
-                queue.push_back(id);
+                if !enqueue_event(&mut queue, id) {
+                    tracing::warn!("Wayland portal event queue is full; dropping event");
+                }
+            }
+        },
+    );
+}
+
+fn subscribe_session_closed(
+    connection: &gio::DBusConnection,
+    active_routes: Arc<Mutex<ActiveRoutes>>,
+    closed_tx: mpsc::SyncSender<String>,
+) {
+    #[allow(deprecated)]
+    connection.signal_subscribe(
+        Some(PORTAL_BUS),
+        Some(SESSION_INTERFACE),
+        Some("Closed"),
+        None,
+        None,
+        gio::DBusSignalFlags::NONE,
+        move |_connection, _sender, path, _interface, _signal, _parameters| {
+            let session = path;
+            let was_current = active_routes
+                .lock()
+                .map(|mut routes| clear_closed_session(&mut routes, session))
+                .unwrap_or(false);
+            if was_current {
+                let _ = closed_tx.try_send(session.to_string());
             }
         },
     );
@@ -306,13 +384,38 @@ fn create_and_bind_session(
     context: &glib::MainContext,
     connection: &gio::DBusConnection,
     bindings: &HashMap<u32, PortalBinding>,
-) -> Result<String, String> {
+) -> Result<(String, HashSet<String>), String> {
     let session = create_session(context, connection)?;
-    if let Err(error) = bind_shortcuts(context, connection, &session, bindings) {
-        close_session(connection, &session);
-        return Err(error);
+    match bind_shortcuts(context, connection, &session, bindings) {
+        Ok(accepted) => Ok((session, accepted)),
+        Err(error) => {
+            close_session(connection, &session);
+            Err(error)
+        }
     }
-    Ok(session)
+}
+
+fn bound_shortcut_ids(results: &glib::Variant) -> Result<HashSet<String>, String> {
+    let results = glib::VariantDict::new(Some(results));
+    let shortcuts = results
+        .lookup_value("shortcuts", None)
+        .ok_or_else(|| "BindShortcuts response did not include shortcuts".to_string())?;
+    if shortcuts.type_().as_str() != "a(sa{sv})" {
+        return Err("BindShortcuts response shortcuts had invalid type".to_string());
+    }
+    let mut accepted = HashSet::new();
+    for index in 0..shortcuts.n_children() {
+        let entry = shortcuts.child_value(index);
+        if entry.n_children() != 2 {
+            return Err("BindShortcuts response contained an invalid shortcut".to_string());
+        }
+        let id = entry
+            .child_value(0)
+            .get::<String>()
+            .ok_or_else(|| "BindShortcuts response shortcut id was invalid".to_string())?;
+        accepted.insert(id);
+    }
+    Ok(accepted)
 }
 
 fn create_session(
@@ -353,7 +456,7 @@ fn bind_shortcuts(
     connection: &gio::DBusConnection,
     session: &str,
     bindings: &HashMap<u32, PortalBinding>,
-) -> Result<(), String> {
+) -> Result<HashSet<String>, String> {
     let handle_token = portal_token("bind");
     let request_path = request_path(connection, &handle_token)?;
     let session_path = ObjectPath::try_from(session)
@@ -365,7 +468,7 @@ fn bind_shortcuts(
     let parameters =
         glib::Variant::tuple_from_iter([session_path, shortcuts, "".to_variant(), options.end()]);
 
-    portal_request(context, connection, &request_path, || {
+    let results = portal_request(context, connection, &request_path, || {
         connection.call_sync(
             Some(PORTAL_BUS),
             PORTAL_PATH,
@@ -378,7 +481,7 @@ fn bind_shortcuts(
             gio::Cancellable::NONE,
         )
     })?;
-    Ok(())
+    bound_shortcut_ids(&results)
 }
 
 fn portal_request<F>(
@@ -608,6 +711,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn initialization_reports_bus_connection_error() {
+        const CHILD: &str = "JAME_PROMPT_TEST_BUS_FAILURE";
+        if std::env::var_os(CHILD).is_none() {
+            let directory = tempfile::tempdir().expect("isolated bus directory");
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "hotkeys::portal::tests::initialization_reports_bus_connection_error",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env(
+                    "DBUS_SESSION_BUS_ADDRESS",
+                    format!(
+                        "unix:path={}",
+                        directory.path().join("absent-bus").display()
+                    ),
+                )
+                .output()
+                .expect("run isolated initialization test");
+            assert!(
+                output.status.success(),
+                "isolated worker failed: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let (_refresh_tx, refresh_rx) = mpsc::channel();
+        let (init_tx, init_rx) = mpsc::sync_channel(1);
+        portal_worker(
+            Arc::new(Mutex::new(HashMap::new())),
+            Arc::new(Mutex::new(ActiveRoutes::default())),
+            refresh_rx,
+            init_tx,
+        );
+        let result = init_rx
+            .try_recv()
+            .expect("worker must report its initialization error");
+        let error = result.expect_err("missing bus must fail initialization");
+        assert!(
+            error.contains("cannot connect to the session bus"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn portal_trigger_uses_xdg_modifier_names() {
         assert_eq!(
             to_portal_trigger("Ctrl+Shift+P"),
@@ -700,5 +851,134 @@ mod tests {
         )]);
         let variant = shortcuts_variant(&bindings).expect("shortcut variant");
         assert_eq!(variant.type_().as_str(), "a(sa{sv})");
+    }
+
+    #[test]
+    fn polling_one_event_preserves_the_next_event() {
+        let queue = event_queue();
+        let mut queue = queue.lock().unwrap();
+        queue.clear();
+        queue.push_back(7);
+        queue.push_back(9);
+        drop(queue);
+        assert_eq!(poll_event(), Some(7));
+        assert_eq!(poll_event(), Some(9));
+        assert_eq!(poll_event(), None);
+    }
+
+    #[test]
+    fn bound_shortcut_ids_uses_only_portal_accepted_subset() {
+        let first = glib::Variant::tuple_from_iter([
+            "prompt_a".to_variant(),
+            glib::VariantDict::new(None).end(),
+        ]);
+        let second = glib::Variant::tuple_from_iter([
+            "prompt_b".to_variant(),
+            glib::VariantDict::new(None).end(),
+        ]);
+        let shortcuts = glib::Variant::array_from_iter_with_type(first.type_(), [&first, &second]);
+        let response = glib::VariantDict::new(None);
+        response.insert_value("shortcuts", &shortcuts);
+        assert_eq!(
+            bound_shortcut_ids(&response.end()).unwrap(),
+            std::collections::HashSet::from(["prompt_a".to_string(), "prompt_b".to_string()])
+        );
+    }
+
+    #[test]
+    fn bound_shortcut_ids_accepts_empty_subset() {
+        let template = glib::Variant::tuple_from_iter([
+            "template".to_variant(),
+            glib::VariantDict::new(None).end(),
+        ]);
+        let shortcuts = glib::Variant::array_from_iter_with_type(
+            template.type_(),
+            std::iter::empty::<&glib::Variant>(),
+        );
+        let response = glib::VariantDict::new(None);
+        response.insert_value("shortcuts", &shortcuts);
+        assert!(bound_shortcut_ids(&response.end()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn enqueue_event_rejects_65th_and_preserves_fifo() {
+        let mut queue = VecDeque::new();
+        for id in 0..MAX_PENDING_EVENTS as u32 {
+            assert!(enqueue_event(&mut queue, id));
+        }
+        assert!(!enqueue_event(&mut queue, 64));
+        assert_eq!(
+            queue.iter().copied().collect::<Vec<_>>(),
+            (0..64).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn enqueue_event_accepts_after_pop_and_appends() {
+        let mut queue = VecDeque::new();
+        for id in 0..MAX_PENDING_EVENTS as u32 {
+            assert!(enqueue_event(&mut queue, id));
+        }
+        assert_eq!(queue.pop_front(), Some(0));
+        assert!(enqueue_event(&mut queue, 64));
+        assert_eq!(queue.back(), Some(&64));
+    }
+
+    #[test]
+    fn activated_route_requires_exact_current_session() {
+        let active = ActiveRoutes {
+            session: Some("/org/freedesktop/portal/desktop/session/test/current".into()),
+            routes: HashMap::from([("prompt_a".into(), 7)]),
+        };
+        assert_eq!(
+            activated_route(
+                &active,
+                "/org/freedesktop/portal/desktop/session/test/current",
+                "prompt_a"
+            ),
+            Some(7)
+        );
+        assert_eq!(
+            activated_route(
+                &active,
+                "/org/freedesktop/portal/desktop/session/test/old",
+                "prompt_a"
+            ),
+            None
+        );
+        assert_eq!(
+            activated_route(
+                &active,
+                "/org/freedesktop/portal/desktop/session/test/current",
+                "prompt_missing"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn closed_session_clears_only_matching_routes() {
+        let mut active = ActiveRoutes {
+            session: Some("/org/freedesktop/portal/desktop/session/test/current".into()),
+            routes: HashMap::from([("prompt_a".into(), 7)]),
+        };
+        assert!(!clear_closed_session(
+            &mut active,
+            "/org/freedesktop/portal/desktop/session/test/old"
+        ));
+        assert_eq!(
+            activated_route(
+                &active,
+                "/org/freedesktop/portal/desktop/session/test/current",
+                "prompt_a"
+            ),
+            Some(7)
+        );
+        assert!(clear_closed_session(
+            &mut active,
+            "/org/freedesktop/portal/desktop/session/test/current"
+        ));
+        assert!(active.session.is_none());
+        assert!(active.routes.is_empty());
     }
 }

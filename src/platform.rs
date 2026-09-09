@@ -29,11 +29,11 @@ pub(crate) fn display_server() -> DisplayServer {
 pub(crate) fn hotkey_backend_kind() -> HotkeyBackendKind {
     #[cfg(target_os = "linux")]
     {
-        return match display_server() {
+        match display_server() {
             DisplayServer::X11 => HotkeyBackendKind::Native,
             DisplayServer::Wayland => HotkeyBackendKind::Portal,
             DisplayServer::Unknown => HotkeyBackendKind::Unavailable,
-        };
+        }
     }
 
     #[cfg(not(target_os = "linux"))]

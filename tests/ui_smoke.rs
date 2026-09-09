@@ -75,7 +75,7 @@ fn wait_for_window(class_name: &str, timeout: Duration) -> String {
 
                 if best_window
                     .as_ref()
-                    .map_or(true, |(_, best_area)| area > *best_area)
+                    .is_none_or(|(_, best_area)| area > *best_area)
                 {
                     best_window = Some((window_id.to_string(), area));
                 }

@@ -34,15 +34,14 @@ impl NativeHotkeyService {
     }
 }
 
-pub(super) fn poll_events() -> Vec<u32> {
+pub(super) fn poll_event() -> Option<u32> {
     let receiver = GlobalHotKeyEvent::receiver();
-    let mut triggered = Vec::new();
     while let Ok(event) = receiver.try_recv() {
         if event.state == global_hotkey::HotKeyState::Pressed {
-            triggered.push(event.id());
+            return Some(event.id());
         }
     }
-    triggered
+    None
 }
 
 pub(super) fn paste_to_active_window() {
