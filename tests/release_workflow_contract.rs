@@ -26,3 +26,20 @@ fn release_job_checks_out_repository_before_using_release_tooling() {
         "release tooling must be checked out before stage_release_assets.py is executed"
     );
 }
+
+#[test]
+fn rpm_release_job_installs_dbus_daemon_for_portal_contract_tests() {
+    let workflow = read_release_workflow();
+    let rpm_job = workflow
+        .split("\n  rpm:\n")
+        .nth(1)
+        .expect("release workflow must define an rpm job")
+        .split("\n  appimage:\n")
+        .next()
+        .expect("rpm job must precede the appimage job");
+
+    assert!(
+        rpm_job.contains("dbus-daemon"),
+        "rpm release job must install dbus-daemon because dbus-run-session is required by the portal contract tests"
+    );
+}

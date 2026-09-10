@@ -141,7 +141,8 @@ jobs:
             bash -lc '
               set -euo pipefail
               dnf -y update
-              dnf -y install git curl rpm-build cargo rust desktop-file-utils gtk3-devel libX11-devel libXtst-devel libxkbcommon-devel libxdo-devel
+              dnf -y install git curl rpm-build cargo rust desktop-file-utils gtk3-devel libX11-devel libXtst-devel libxkbcommon-devel libxdo-devel \
+                dbus-daemon
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
               source /root/.cargo/env
               rustup toolchain install stable
