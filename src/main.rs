@@ -3,9 +3,11 @@
     windows_subsystem = "windows"
 )]
 
+mod application;
 mod autostart;
 mod config;
 pub mod db;
+pub mod domain;
 mod hotkeys;
 mod icon;
 mod launch;
