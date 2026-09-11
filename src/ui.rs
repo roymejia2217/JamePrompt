@@ -56,6 +56,7 @@ use iced::{
     Border, Color, ContentFit, Element, Font, Length, Subscription, Task, Theme,
 };
 
+use crate::application::notification_store::{NotificationId, NotificationStore};
 #[cfg(not(test))]
 use crate::autostart;
 use crate::config::{
@@ -63,6 +64,11 @@ use crate::config::{
     APP_VERSION, WINDOW_INITIAL_WIDTH,
 };
 use crate::db::Database;
+use crate::domain::notification::{
+    Field, MessageKey, Notification, NotificationAction, NotificationContext, Presentation,
+    Severity,
+};
+use crate::domain::notification_policy::{NotificationEvent, NotificationPolicy};
 use crate::hotkeys::HotkeyService;
 use crate::icon;
 use crate::launch::should_show_window_after_hidden_start;
@@ -137,6 +143,7 @@ pub enum Message {
     TrayTick,
     PromptFilterChanged(crate::models::PromptFilter),
     PromptSortChanged(crate::models::PromptSort),
+    NotificationDismissed(NotificationId),
 }
 
 pub struct NewPromptForm {
@@ -197,6 +204,8 @@ pub struct JamePromptApp {
     prompt_sort: PromptSort,
     selected_id: Option<PromptId>,
     status_message: String,
+    notifications: NotificationStore,
+    form_errors: Vec<Notification>,
     settings: Settings,
     hotkey_service: Option<Arc<HotkeyService>>,
     hotkey_ids: HashMap<u32, PromptId>,
@@ -218,17 +227,6 @@ pub struct JamePromptApp {
     smoke_deadline: Option<Instant>,
     // Tray fields
     tray: Option<TrayHandle>,
-}
-
-fn hotkey_paste_status(name: &str, outcome: crate::hotkeys::PasteOutcome) -> String {
-    match outcome {
-        crate::hotkeys::PasteOutcome::ClipboardTransferred => {
-            format!("Hotkey: clipboard transfer completed for \"{name}\"")
-        }
-        crate::hotkeys::PasteOutcome::Failed => {
-            format!("Hotkey: automatic paste failed or timed out for \"{name}\"")
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -300,6 +298,8 @@ impl Default for JamePromptApp {
             prompt_sort: PromptSort::NameAsc,
             selected_id: None,
             status_message,
+            notifications: NotificationStore::new(),
+            form_errors: Vec::new(),
             settings,
             hotkey_service,
             hotkey_ids,
@@ -341,6 +341,8 @@ impl JamePromptApp {
             prompt_sort: PromptSort::NameAsc,
             selected_id: None,
             status_message: String::new(),
+            notifications: NotificationStore::new(),
+            form_errors: Vec::new(),
             settings: Settings::default(),
             hotkey_service: None,
             hotkey_ids: HashMap::new(),
@@ -405,6 +407,159 @@ impl JamePromptApp {
             }
             self.status_message = success_message.to_string();
         });
+    }
+
+    fn show_notification(&mut self, event: NotificationEvent) {
+        let notification = NotificationPolicy::classify(event)
+            .expect("notification policy must only construct valid notifications");
+        self.notifications.publish(notification);
+        match notification.presentation() {
+            Presentation::Status => self.status_message = self.notification_message(notification),
+            Presentation::MessageBar => self.status_message.clear(),
+            Presentation::InlineField | Presentation::Dialog => {}
+        }
+    }
+
+    fn notification_message(&self, notification: Notification) -> String {
+        match (notification.message(), notification.context()) {
+            (MessageKey::PromptCopied, NotificationContext::None) => {
+                "Copied to clipboard".to_string()
+            }
+            (MessageKey::SearchCompleted, NotificationContext::SearchResultCount(count)) => {
+                format!("{count} prompts found")
+            }
+            (MessageKey::FieldRequired, NotificationContext::Field(Field::Name)) => {
+                "Enter a prompt name".to_string()
+            }
+            (MessageKey::FieldRequired, NotificationContext::Field(Field::Content)) => {
+                "Enter prompt content".to_string()
+            }
+            (MessageKey::InvalidShortcut, NotificationContext::Field(Field::Hotkey)) => {
+                "Enter a valid hotkey combination".to_string()
+            }
+            (MessageKey::PasteRequested, NotificationContext::Operation(_)) => {
+                "Automatic paste requested".to_string()
+            }
+            (MessageKey::PasteBusy, NotificationContext::Operation(_)) => {
+                "Automatic paste is already in progress".to_string()
+            }
+            (MessageKey::PasteCompleted, NotificationContext::Operation(_)) => {
+                "Automatic paste completed".to_string()
+            }
+            (MessageKey::PastePermissionDenied, NotificationContext::Operation(_)) => {
+                "Automatic paste needs Remote Desktop and Clipboard permission. Grant it in your system settings, then try the shortcut again.".to_string()
+            }
+            (MessageKey::PasteFailed, NotificationContext::Operation(_)) => {
+                "Automatic paste did not complete. Try the shortcut again.".to_string()
+            }
+            (MessageKey::SaveFailed, NotificationContext::Operation(_)) => {
+                "Could not save your changes. Try again.".to_string()
+            }
+            (MessageKey::ExportFailed, NotificationContext::Operation(_)) => {
+                "Could not export the prompts. Try again.".to_string()
+            }
+            (MessageKey::ImportFailed, NotificationContext::Operation(_)) => {
+                "Could not import the backup. Check the file and try again.".to_string()
+            }
+            (MessageKey::DeleteFailed, NotificationContext::Operation(_)) => {
+                "Could not delete the prompt. Try again.".to_string()
+            }
+            (MessageKey::DestructiveActionRequested, NotificationContext::None) => {
+                "Confirm this action to continue.".to_string()
+            }
+            (MessageKey::WindowHiddenToTray, NotificationContext::None) => {
+                "JamePrompt is still running in the system tray".to_string()
+            }
+            (MessageKey::WindowRestored, NotificationContext::None) => {
+                "JamePrompt restored".to_string()
+            }
+            (MessageKey::WindowRestoreFailed, NotificationContext::None) => {
+                "Could not restore the application window. Try again.".to_string()
+            }
+            _ => "Notification unavailable".to_string(),
+        }
+    }
+
+    fn view_message_bar(&self) -> Element<'_, Message> {
+        let Some(record) = self.notifications.active() else {
+            return Space::with_height(0).into();
+        };
+        let notification = record.notification();
+        if !matches!(notification.presentation(), Presentation::MessageBar) {
+            return Space::with_height(0).into();
+        }
+
+        let theme = self.theme();
+        let palette = theme.extended_palette();
+        let color = match notification.severity() {
+            Severity::Error => palette.danger.strong.color,
+            Severity::Warning => palette.secondary.strong.color,
+            Severity::Info | Severity::Success => palette.primary.strong.color,
+        };
+        let dismiss = matches!(notification.action(), Some(NotificationAction::Dismiss));
+        let content = if dismiss {
+            row![
+                text(self.notification_message(notification)).width(Length::Fill),
+                button(text("Dismiss"))
+                    .on_press(Message::NotificationDismissed(record.id()))
+                    .padding(CONTROL_PADDING)
+                    .style(button::secondary),
+            ]
+            .spacing(10)
+            .align_y(alignment::Alignment::Center)
+        } else {
+            row![text(self.notification_message(notification)).width(Length::Fill)]
+        };
+
+        container(content)
+            .width(Length::Fill)
+            .padding(MAIN_PANEL_PADDING)
+            .style(move |theme: &Theme| container::Style {
+                border: Border {
+                    color,
+                    width: 1.0,
+                    radius: BORDER_RADIUS.into(),
+                },
+                text_color: Some(theme.extended_palette().background.base.text),
+                ..Default::default()
+            })
+            .into()
+    }
+
+    fn set_form_error(&mut self, event: NotificationEvent) {
+        let notification = NotificationPolicy::classify(event)
+            .expect("notification policy must only construct valid form errors");
+        let field = match notification.context() {
+            NotificationContext::Field(field) => field,
+            _ => return,
+        };
+        self.form_errors
+            .retain(|existing| existing.context() != NotificationContext::Field(field));
+        self.form_errors.push(notification);
+    }
+
+    fn clear_form_error(&mut self, field: Field) {
+        self.form_errors
+            .retain(|error| error.context() != NotificationContext::Field(field));
+    }
+
+    fn form_error_message(&self, field: Field) -> Option<String> {
+        self.form_errors
+            .iter()
+            .find(|error| error.context() == NotificationContext::Field(field))
+            .copied()
+            .map(|error| self.notification_message(error))
+    }
+
+    fn view_form_error(&self, field: Field) -> Element<'_, Message> {
+        if let Some(message) = self.form_error_message(field) {
+            text(message)
+                .size(MODAL_LABEL_TEXT_SIZE)
+                .color(self.theme().extended_palette().danger.strong.color)
+                .into()
+        } else {
+            Space::with_height(0).into()
+        }
     }
 
     fn unregister_prompt_hotkey(&mut self, id: &str) {
@@ -535,8 +690,8 @@ impl JamePromptApp {
         match self.db.get_by_id(id) {
             Ok(Some(prompt)) => self.update_prompt_cache(prompt),
             Ok(None) => self.remove_prompt_cache(id),
-            Err(error) => {
-                self.status_message = format!("Database error: {}", error);
+            Err(_) => {
+                self.show_notification(NotificationEvent::SaveFailed);
             }
         }
     }
@@ -776,6 +931,8 @@ impl JamePromptApp {
             prompt_sort: PromptSort::NameAsc,
             selected_id: None,
             status_message: "Smoke mode ready".into(),
+            notifications: NotificationStore::new(),
+            form_errors: Vec::new(),
             settings: Settings::default(),
             hotkey_service: None,
             hotkey_ids: HashMap::new(),
@@ -933,36 +1090,40 @@ impl JamePromptApp {
                 Message::SearchChanged(term) => {
                     self.search_term = term;
                     self.refresh_prompts("");
-                    self.status_message = format!("{} prompts found", self.prompts.len());
+                    self.show_notification(NotificationEvent::SearchCompleted {
+                        result_count: self.prompts.len(),
+                    });
                 }
                 Message::PromptSelected(id) => {
                     self.selected_id = Some(id);
-                    self.status_message = "Prompt selected".into();
+                    self.status_message.clear();
                 }
                 Message::PromptListRequested => {
                     self.selected_id = None;
-                    self.status_message = "Prompt list".into();
+                    self.status_message.clear();
                 }
                 Message::CopyPressed(id, content) => {
-                    if let Err(error) = self.db.record_use(&id) {
-                        self.status_message = format!("Copied, but usage update failed: {}", error);
+                    if self.db.record_use(&id).is_err() {
+                        self.show_notification(NotificationEvent::SaveFailed);
                     } else {
                         self.sync_prompt_cache_from_db(&id);
-                        self.refresh_prompts("Copied to clipboard");
+                        self.refresh_prompts("");
+                        self.show_notification(NotificationEvent::PromptCopied);
                     }
                     return iced::clipboard::write(content);
                 }
                 Message::NewPressed => {
                     self.new_form = Some(NewPromptForm::default());
-                    self.status_message = "Creating new prompt...".into();
+                    self.form_errors.clear();
+                    self.status_message.clear();
                 }
                 Message::DeletePressed(id) => {
                     self.pending_delete_id = Some(id);
-                    self.status_message = "Confirm delete".into();
+                    self.status_message.clear();
                 }
                 Message::DeleteCancelPressed => {
                     self.pending_delete_id = None;
-                    self.status_message = "Delete cancelled".into();
+                    self.status_message.clear();
                 }
                 Message::DeleteConfirmPressed(id) => {
                     self.unregister_prompt_hotkey(&id);
@@ -971,59 +1132,85 @@ impl JamePromptApp {
                             self.remove_prompt_cache(&id);
                             self.selected_id = None;
                             self.pending_delete_id = None;
-                            self.refresh_prompts("Prompt deleted");
+                            self.refresh_prompts("");
                         }
-                        Err(e) => {
-                            self.status_message = format!("Error deleting prompt: {}", e);
+                        Err(_) => {
+                            self.show_notification(NotificationEvent::DeleteFailed);
                         }
                     }
                 }
                 Message::EditPressed(id) => {
                     if let Some(p) = self.prompt_cloned_by_id(&id) {
                         self.new_form = Some(NewPromptForm::from_prompt(&p));
-                        self.status_message = format!("Editing \"{}\"", p.name);
+                        self.form_errors.clear();
+                        self.status_message.clear();
                     } else {
-                        self.status_message = "Prompt not found".into();
+                        self.status_message.clear();
                     }
                 }
                 Message::HotkeyTick => {
                     if let Some(outcome) = crate::hotkeys::poll_paste_outcome() {
-                        if let Some(name) = self.pending_hotkey_name.take() {
-                            self.status_message = hotkey_paste_status(&name, outcome);
+                        if self.pending_hotkey_name.take().is_some() {
+                            match outcome {
+                                crate::hotkeys::PasteOutcome::ClipboardTransferred => {
+                                    self.show_notification(NotificationEvent::PasteCompleted);
+                                }
+                                crate::hotkeys::PasteOutcome::Failed => {
+                                    self.show_notification(NotificationEvent::PasteFailed);
+                                }
+                            }
                         }
                     }
                     if let Some(hotkey_id) = HotkeyService::poll_event() {
                         if let Some(prompt_id) = self.hotkey_ids.get(&hotkey_id) {
                             if let Some(p) = self.prompt_cloned_by_id(prompt_id) {
                                 let requested = crate::hotkeys::paste_to_active_window(p.content);
-                                self.status_message = if !requested {
-                                    "Hotkey: automatic paste already in progress".into()
+                                if !requested {
+                                    self.show_notification(NotificationEvent::PasteBusy);
                                 } else if crate::hotkeys::is_paste_permission_denied() {
-                                    "Hotkey: automatic paste unavailable — grant Remote Desktop and Clipboard access".into()
+                                    self.show_notification(
+                                        NotificationEvent::PastePermissionDenied,
+                                    );
                                 } else {
                                     self.pending_hotkey_name = Some(p.name.clone());
-                                    format!("Hotkey: requested automatic paste for \"{}\"", p.name)
-                                };
+                                    self.show_notification(NotificationEvent::PasteRequested);
+                                }
                                 return Task::none();
                             }
                         }
                     }
                 }
                 Message::FormNameChanged(name) => {
+                    if !name.trim().is_empty() {
+                        self.clear_form_error(Field::Name);
+                    }
                     if let Some(ref mut form) = self.new_form {
                         form.name = name;
                     }
                 }
                 Message::FormContentEdited(action) => {
-                    if let Some(ref mut form) = self.new_form {
+                    let has_content = if let Some(ref mut form) = self.new_form {
                         form.content_editor.perform(action);
                         form.content = normalize_editor_text(&form.content_editor.text());
+                        !form.content.trim().is_empty()
+                    } else {
+                        false
+                    };
+                    if has_content {
+                        self.clear_form_error(Field::Content);
                     }
                 }
                 Message::FormSave => {
                     if let Some(form) = self.new_form.take() {
                         if form.name.trim().is_empty() || form.content.trim().is_empty() {
-                            self.status_message = "Name and content are required".into();
+                            self.form_errors.clear();
+                            if form.name.trim().is_empty() {
+                                self.set_form_error(NotificationEvent::NameRequired);
+                            }
+                            if form.content.trim().is_empty() {
+                                self.set_form_error(NotificationEvent::ContentRequired);
+                            }
+                            self.status_message.clear();
                             self.new_form = Some(form);
                         } else {
                             let hotkey = if form.hotkey.trim().is_empty() {
@@ -1031,7 +1218,8 @@ impl JamePromptApp {
                             } else {
                                 let hotkey = form.hotkey.trim().to_string();
                                 if !crate::hotkeys::validate_hotkey(&hotkey) {
-                                    self.status_message = format!("Invalid hotkey: {}", hotkey);
+                                    self.set_form_error(NotificationEvent::InvalidShortcut);
+                                    self.status_message.clear();
                                     self.new_form = Some(form);
                                     return Task::none();
                                 }
@@ -1068,11 +1256,10 @@ impl JamePromptApp {
                                         }
                                         self.selected_id = Some(editing_id.clone());
                                         self.sync_prompt_cache_from_db(&editing_id);
-                                        self.refresh_prompts("Prompt updated");
+                                        self.refresh_prompts("");
                                     }
-                                    Err(e) => {
-                                        self.status_message =
-                                            format!("Error updating prompt: {}", e);
+                                    Err(_) => {
+                                        self.show_notification(NotificationEvent::SaveFailed);
                                         let content = prompt.content;
                                         let content_editor =
                                             text_editor::Content::with_text(&content);
@@ -1114,11 +1301,10 @@ impl JamePromptApp {
                                         }
                                         self.selected_id = Some(new_id.clone());
                                         self.sync_prompt_cache_from_db(&new_id);
-                                        self.refresh_prompts("Prompt created");
+                                        self.refresh_prompts("");
                                     }
-                                    Err(e) => {
-                                        self.status_message =
-                                            format!("Error creating prompt: {}", e);
+                                    Err(_) => {
+                                        self.show_notification(NotificationEvent::SaveFailed);
                                         let content = prompt.content;
                                         let content_editor =
                                             text_editor::Content::with_text(&content);
@@ -1138,31 +1324,34 @@ impl JamePromptApp {
                 }
                 Message::FormCancel => {
                     self.new_form = None;
+                    self.form_errors.clear();
                     self.listening_for_hotkey = false;
-                    self.status_message = "Cancelled".into();
+                    self.status_message.clear();
                 }
                 Message::FormHotkeyRecordPressed => {
                     self.listening_for_hotkey = true;
-                    self.status_message = "Press your hotkey combination...".into();
+                    self.status_message.clear();
                 }
                 Message::FormHotkeyCaptured(hotkey_str) => {
                     self.listening_for_hotkey = false;
+                    self.clear_form_error(Field::Hotkey);
                     if let Some(ref mut form) = self.new_form {
                         form.hotkey = hotkey_str;
                         form.hotkey_enabled = true;
                     }
-                    self.status_message = "Hotkey captured".into();
+                    self.status_message.clear();
                 }
                 Message::FormHotkeyClearPressed => {
+                    self.clear_form_error(Field::Hotkey);
                     if let Some(ref mut form) = self.new_form {
                         form.hotkey = String::new();
                         form.hotkey_enabled = false;
                     }
-                    self.status_message = "Hotkey cleared".into();
+                    self.status_message.clear();
                 }
                 Message::FormHotkeyListeningCancelled => {
                     self.listening_for_hotkey = false;
-                    self.status_message = "Hotkey capture cancelled".into();
+                    self.status_message.clear();
                 }
                 Message::FormHotkeyEnabledToggled(enabled) => {
                     if let Some(ref mut form) = self.new_form {
@@ -1174,32 +1363,31 @@ impl JamePromptApp {
                     Ok(()) => {
                         self.sync_prompt_cache_from_db(&id);
                         self.selected_id = Some(id);
-                        self.refresh_prompts(if favorite {
-                            "Prompt added to favorites"
-                        } else {
-                            "Prompt removed from favorites"
-                        });
+                        self.refresh_prompts("");
                     }
-                    Err(error) => {
-                        self.status_message = format!("Error updating favorite: {}", error);
+                    Err(_) => {
+                        self.show_notification(NotificationEvent::SaveFailed);
                     }
                 },
                 Message::PromptFilterChanged(filter) => {
                     self.prompt_filter = filter;
-                    self.refresh_prompts("Filter changed");
+                    self.refresh_prompts("");
                 }
                 Message::PromptSortChanged(sort) => {
                     self.prompt_sort = sort;
-                    self.refresh_prompts("Sort changed");
+                    self.refresh_prompts("");
+                }
+                Message::NotificationDismissed(id) => {
+                    self.notifications.dismiss(id);
                 }
                 Message::SettingsPressed => {
                     self.show_settings = true;
                     self.show_info = false;
-                    self.status_message = "Settings".into();
+                    self.status_message.clear();
                 }
                 Message::SettingsCancel => {
                     self.show_settings = false;
-                    self.status_message = "Settings closed".into();
+                    self.status_message.clear();
                 }
                 Message::SettingsHotkeyToggled(enabled) => {
                     self.settings.hotkeys_enabled = enabled;
@@ -1211,7 +1399,7 @@ impl JamePromptApp {
                             }
                         }
                         self.hotkey_ids.clear();
-                        self.status_message = "All hotkeys disabled".into();
+                        self.status_message.clear();
                     } else {
                         crate::hotkeys::prewarm_permission();
                         // Re-register all enabled prompts
@@ -1226,25 +1414,21 @@ impl JamePromptApp {
                                 }
                             }
                         }
-                        self.status_message = "All hotkeys enabled".into();
+                        self.status_message.clear();
                     }
                 }
                 Message::SettingsAutostartToggled(enabled) => {
                     self.settings.autostart_enabled = enabled;
-                    self.status_message = if enabled {
-                        "Autostart enabled".into()
-                    } else {
-                        "Autostart disabled".into()
-                    };
+                    self.status_message.clear();
                 }
                 Message::SettingsThemeChanged(theme) => {
                     self.settings.theme = theme;
-                    self.status_message = format!("Theme changed to {}", self.settings.theme);
+                    self.status_message.clear();
                 }
                 Message::SettingsSave => {
                     let path = get_settings_path();
                     let settings = self.settings.clone();
-                    self.status_message = "Saving settings".into();
+                    self.status_message.clear();
                     return Task::perform(
                         async move {
                             SettingsService::save_and_apply(&settings, &path, |enabled| {
@@ -1255,29 +1439,23 @@ impl JamePromptApp {
                         Message::SettingsSaved,
                     );
                 }
-                Message::SettingsSaved(result) => {
-                    self.status_message = match result {
-                        Ok(()) => "Settings saved".into(),
-                        Err(error) => {
-                            format!("Failed to save settings: {}", error)
-                        }
-                    };
-                }
+                Message::SettingsSaved(result) => match result {
+                    Ok(()) => self.status_message.clear(),
+                    Err(_) => self.show_notification(NotificationEvent::SaveFailed),
+                },
                 Message::SettingsExportPressed => {
-                    self.status_message = "Exporting prompts".into();
+                    self.status_message.clear();
                     return Task::perform(
                         export_prompts_to_json_file(self.all_prompts.clone()),
                         Message::SettingsExportFinished,
                     );
                 }
-                Message::SettingsExportFinished(result) => {
-                    self.status_message = match result {
-                        Ok(path) => format!("Prompts exported to {}", path.display()),
-                        Err(error) => error,
-                    };
-                }
+                Message::SettingsExportFinished(result) => match result {
+                    Ok(_) => self.status_message.clear(),
+                    Err(_) => self.show_notification(NotificationEvent::ExportFailed),
+                },
                 Message::SettingsImportPressed => {
-                    self.status_message = "Choose a prompt backup".into();
+                    self.status_message.clear();
                     return Task::perform(
                         import_prompts_from_json_file(),
                         Message::SettingsImportLoaded,
@@ -1292,75 +1470,67 @@ impl JamePromptApp {
                                 self.pending_import_mode = ImportMode::Merge;
                                 self.pending_duplicate_mode = DuplicateMode::Skip;
                                 self.show_settings = false;
-                                self.status_message = "Review prompt import".into();
+                                self.status_message.clear();
                             }
-                            Err(error) => {
-                                self.status_message = format!("Import failed: {}", error);
+                            Err(_) => {
+                                self.show_notification(NotificationEvent::ImportFailed);
                             }
                         }
                     }
-                    Err(error) => {
-                        self.status_message = error;
+                    Err(_) => {
+                        self.show_notification(NotificationEvent::ImportFailed);
                     }
                 },
                 Message::ImportModeSelected(mode) => {
                     if self.all_prompts.is_empty() && matches!(mode, ImportMode::ReplaceAll) {
                         self.pending_import_mode = ImportMode::Merge;
-                        self.status_message = "Import will add prompts".into();
+                        self.status_message.clear();
                         return Task::none();
                     }
                     self.pending_import_mode = mode;
-                    self.status_message = match mode {
-                        ImportMode::Merge => "Import will merge with existing prompts".into(),
-                        ImportMode::ReplaceAll => "Import will replace all existing prompts".into(),
-                    };
+                    self.status_message.clear();
                 }
                 Message::DuplicateModeSelected(mode) => {
                     self.pending_duplicate_mode = mode;
-                    self.status_message = match mode {
-                        DuplicateMode::Skip => "Duplicate prompts will be skipped".into(),
-                        DuplicateMode::Overwrite => "Duplicate prompts will be overwritten".into(),
-                    };
+                    self.status_message.clear();
                 }
                 Message::ImportConfirmPressed => match self.apply_pending_import() {
                     Ok(summary) => {
-                        self.status_message = format!(
-                            "Import complete: {} added, {} overwritten, {} skipped",
-                            summary.inserted, summary.overwritten, summary.skipped
-                        );
+                        let _ = summary;
+                        self.status_message.clear();
                     }
-                    Err(error) => {
-                        self.status_message = error;
+                    Err(_) => {
+                        self.show_notification(NotificationEvent::ImportFailed);
                     }
                 },
                 Message::ImportCancelPressed => {
                     self.pending_import_backup = None;
                     self.pending_import_preview = None;
-                    self.status_message = "Import cancelled".into();
+                    self.status_message.clear();
                 }
                 Message::InfoPressed => {
                     self.show_info = true;
                     self.show_settings = false;
-                    self.status_message = "About".into();
+                    self.status_message.clear();
                 }
                 Message::InfoDismissed => {
                     self.show_info = false;
-                    self.status_message = "About closed".into();
+                    self.status_message.clear();
                 }
                 // Tray: Window close requested -> hide to tray
                 Message::CloseRequested(id) => {
                     self.record_window_closed(id);
                     if should_exit_on_close_request(self.smoke_mode) {
-                        self.status_message = format!("{APP_NAME} smoke run exiting");
+                        self.status_message.clear();
                         return iced::exit();
                     }
 
-                    self.status_message = format!("{APP_NAME} is still running in the system tray");
+                    self.show_notification(NotificationEvent::WindowHiddenToTray);
                 }
                 Message::ShowWindow(id) => {
                     if let Some(id) = id.or(self.main_window_id) {
                         self.main_window_id = Some(id);
-                        self.status_message = format!("{APP_NAME} restored");
+                        self.show_notification(NotificationEvent::WindowRestored);
                         return Task::batch([
                             iced::window::change_mode(id, iced::window::Mode::Windowed),
                             iced::window::gain_focus(id),
@@ -1372,7 +1542,7 @@ impl JamePromptApp {
                             .map(|id| Message::ShowWindow(Some(id)));
                     }
 
-                    self.status_message = "Unable to restore the window".into();
+                    self.show_notification(NotificationEvent::WindowRestoreFailed);
                 }
                 Message::WindowResized(size) => {
                     self.content_width = size.width;
@@ -1473,7 +1643,7 @@ impl JamePromptApp {
                 UiDensity::Compact => self.view_compact_body(),
             };
 
-            column![header, body, status_bar].into()
+            column![header, self.view_message_bar(), body, status_bar].into()
         })
     }
 
@@ -1545,17 +1715,11 @@ impl JamePromptApp {
             if self.prompts.is_empty() {
                 list_col = list_col.push(
                     container(
-                        column![
-                            Space::with_height(Length::Fill),
-                            text(self.prompt_list_empty_message())
-                                .size(EMPTY_STATE_TEXT_SIZE)
-                                .color(self.theme().extended_palette().secondary.strong.color),
-                            Space::with_height(Length::Fill),
-                        ]
-                        .align_x(alignment::Alignment::Center)
-                        .width(Length::Fill),
+                        text(self.prompt_list_empty_message())
+                            .size(EMPTY_STATE_TEXT_SIZE)
+                            .color(self.theme().extended_palette().secondary.strong.color),
                     )
-                    .height(Length::Fill)
+                    .padding(40)
                     .center_x(Length::Fill),
                 );
             }
@@ -1858,12 +2022,15 @@ impl JamePromptApp {
                     Space::with_height(15),
                     text("Name").size(MODAL_LABEL_TEXT_SIZE),
                     name_input,
+                    self.view_form_error(Field::Name),
                     Space::with_height(10),
                     text("Content").size(MODAL_LABEL_TEXT_SIZE),
                     content_input,
+                    self.view_form_error(Field::Content),
                     Space::with_height(10),
                     text("Hotkey (optional)").size(MODAL_LABEL_TEXT_SIZE),
                     hotkey_row,
+                    self.view_form_error(Field::Hotkey),
                     Space::with_height(MODAL_SECTION_SPACING),
                     hotkey_enabled_checkbox,
                     Space::with_height(20),
@@ -2945,9 +3112,10 @@ mod tests {
 
         let _ = app.update(Message::FormSave);
 
-        assert!(
-            app.status_message.contains("Invalid hotkey"),
-            "Invalid hotkey should be rejected with an explicit message"
+        assert_eq!(
+            app.form_error_message(Field::Hotkey).as_deref(),
+            Some("Enter a valid hotkey combination"),
+            "Invalid hotkey should be rejected next to the hotkey field"
         );
         assert!(
             app.prompts.is_empty(),
@@ -2957,6 +3125,26 @@ mod tests {
         assert_eq!(form.name, "Security");
         assert_eq!(form.content, "Invalid hotkey should not be saved");
         assert_eq!(form.hotkey, "Ctrl++");
+    }
+
+    #[test]
+    fn form_save_shows_missing_name_and_content_next_to_each_field() {
+        let db = Database::in_memory().expect("Failed to create in-memory database");
+        let mut app = JamePromptApp::with_database(db);
+        app.new_form = Some(NewPromptForm::default());
+
+        let _ = app.update(Message::FormSave);
+
+        assert_eq!(
+            app.form_error_message(Field::Name).as_deref(),
+            Some("Enter a prompt name")
+        );
+        assert_eq!(
+            app.form_error_message(Field::Content).as_deref(),
+            Some("Enter prompt content")
+        );
+        assert!(app.status_message.is_empty());
+        assert!(app.new_form.is_some());
     }
 
     #[test]
@@ -3338,7 +3526,7 @@ mod tests {
             .expect("Prompt should remain visible after favorite update");
         assert!(prompt.favorite);
         assert_eq!(app.selected_id, Some(id));
-        assert_eq!(app.status_message, "Prompt added to favorites");
+        assert!(app.status_message.is_empty());
     }
 
     #[test]
@@ -3667,7 +3855,7 @@ mod tests {
         let _ = app.update(Message::ImportModeSelected(ImportMode::ReplaceAll));
 
         assert!(matches!(app.pending_import_mode, ImportMode::Merge));
-        assert_eq!(app.status_message, "Import will add prompts");
+        assert!(app.status_message.is_empty());
     }
 
     #[test]
@@ -3763,14 +3951,40 @@ mod tests {
     }
 
     #[test]
-    fn hotkey_paste_status_reports_outcomes() {
+    fn paste_permission_warning_survives_search_and_can_be_dismissed() {
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+        app.show_notification(NotificationEvent::PastePermissionDenied);
+        let warning = app
+            .notifications
+            .active()
+            .expect("permission warning should be active");
+        let warning_id = warning.id();
+        assert_eq!(warning.notification().severity(), Severity::Warning);
         assert_eq!(
-            hotkey_paste_status("Demo", crate::hotkeys::PasteOutcome::ClipboardTransferred),
-            "Hotkey: clipboard transfer completed for \"Demo\""
+            warning.notification().presentation(),
+            Presentation::MessageBar
         );
+        assert!(warning.is_persistent());
+
+        let warning_copy = app.notification_message(warning.notification());
         assert_eq!(
-            hotkey_paste_status("Demo", crate::hotkeys::PasteOutcome::Failed),
-            "Hotkey: automatic paste failed or timed out for \"Demo\""
+            warning_copy,
+            "Automatic paste needs Remote Desktop and Clipboard permission. Grant it in your system settings, then try the shortcut again."
         );
+
+        let _ = app.update(Message::SearchChanged("private search term".to_string()));
+        assert_eq!(
+            app.notifications.active().map(|record| record.id()),
+            Some(warning_id)
+        );
+
+        let _ = app.update(Message::NotificationDismissed(warning_id));
+        let search = app
+            .notifications
+            .active()
+            .expect("search status should remain active after dismissal");
+        assert_eq!(search.notification().message(), MessageKey::SearchCompleted);
+        assert_eq!(search.notification().presentation(), Presentation::Status);
+        assert_eq!(app.status_message, "0 prompts found");
     }
 }
