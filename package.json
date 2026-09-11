@@ -1,0 +1,15 @@
+{
+  "name": "jame-prompt-development-tools",
+  "private": true,
+  "description": "Repository development tooling for JamePrompt",
+  "scripts": {
+    "prepare": "husky",
+    "lint:commit": "commitlint --from HEAD~1 --to HEAD --verbose",
+    "test:commitlint": "bash scripts/test-commitlint.sh"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "21.2.2",
+    "@commitlint/config-conventional": "21.2.2",
+    "husky": "9.1.7"
+  }
+}
