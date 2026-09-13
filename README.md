@@ -30,6 +30,8 @@ cd JamePrompt
 cargo build --release --locked
 ```
 
+Requires Rust 1.88 or newer. Iced is pinned to 0.14.0; build with `--locked`.
+
 ```bash
 ./target/release/jame-prompt
 ```

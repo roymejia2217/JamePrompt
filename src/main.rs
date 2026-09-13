@@ -97,18 +97,23 @@ fn main() -> iced::Result {
         }
     });
 
-    iced::daemon(title_application, update_application, view_application)
-        .theme(theme_application)
-        .font(icon::FONT)
-        .subscription(JamePromptApp::subscription)
-        .run_with(move || {
+    iced::daemon(
+        move || {
             measure("startup.app_state", || {
                 let (mut app, startup_task) =
                     JamePromptApp::new_with_hidden_start(start_minimized, ui_smoke);
                 let window_task = initial_window_task(&mut app, start_minimized);
                 (app, Task::batch([startup_task, window_task]))
             })
-        })
+        },
+        update_application,
+        view_application,
+    )
+    .title(title_application)
+    .theme(theme_application)
+    .font(icon::FONT)
+    .subscription(JamePromptApp::subscription)
+    .run()
 }
 
 #[cfg(test)]

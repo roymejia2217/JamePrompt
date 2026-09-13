@@ -1,35 +1,105 @@
 const BORDER_RADIUS: f32 = 8.0;
 const MAIN_PANEL_PADDING: u16 = 15;
 const DETAIL_PANEL_INNER_PADDING: u16 = 20;
-const DETAIL_SECTION_SPACING: u16 = 15;
-const HEADER_LOGO_SIZE: u16 = 28;
-const HEADER_BRAND_SPACING: u16 = 10;
-const MODAL_SECTION_SPACING: u16 = 10;
-const PROMPT_PRIMARY_TOOLBAR_SPACING: u16 = 10;
-const PROMPT_SECONDARY_TOOLBAR_SPACING: u16 = 8;
+const DETAIL_SECTION_SPACING: u32 = 15;
+const HEADER_LOGO_SIZE: u32 = 28;
+const HEADER_BRAND_SPACING: u32 = 10;
+const MODAL_SECTION_SPACING: u32 = 10;
+const PROMPT_PRIMARY_TOOLBAR_SPACING: u32 = 10;
+const PROMPT_SECONDARY_TOOLBAR_SPACING: u32 = 8;
 const PROMPT_FILTER_PICKER_WIDTH: f32 = 120.0;
 const PROMPT_SORT_PICKER_WIDTH: f32 = 170.0;
 const PROMPT_LIST_FAVORITE_INDICATOR_WIDTH: f32 = 24.0;
-const PROMPT_LIST_FAVORITE_ICON_SIZE: u16 = 16;
+const PROMPT_LIST_FAVORITE_ICON_SIZE: u32 = 16;
 const COMPACT_LAYOUT_WIDTH_THRESHOLD: f32 = 840.0;
-const LIST_PANEL_SPACING: u16 = 10;
-const PROMPT_LIST_SPACING: u16 = 5;
-const PROMPT_CARD_SPACING: u16 = 8;
+const LIST_PANEL_SPACING: u32 = 10;
+const PROMPT_LIST_SPACING: u32 = 5;
+const PROMPT_CARD_SPACING: u32 = 8;
 const PROMPT_CARD_PADDING: u16 = 10;
-const PROMPT_PREVIEW_TEXT_SIZE: u16 = 14;
-const PROMPT_DETAIL_TITLE_SIZE: u16 = 24;
-const PROMPT_CONTENT_TEXT_SIZE: u16 = 14;
-const PROMPT_METADATA_TEXT_SIZE: u16 = 12;
-const EMPTY_STATE_TEXT_SIZE: u16 = 16;
-const MODAL_TITLE_TEXT_SIZE: u16 = 20;
-const MODAL_LABEL_TEXT_SIZE: u16 = 12;
-const MODAL_BODY_TEXT_SIZE: u16 = 14;
+const PROMPT_PREVIEW_TEXT_SIZE: u32 = 14;
+const PROMPT_DETAIL_TITLE_SIZE: u32 = 24;
+const PROMPT_CONTENT_TEXT_SIZE: u32 = 14;
+const PROMPT_METADATA_TEXT_SIZE: u32 = 12;
+const EMPTY_STATE_TEXT_SIZE: u32 = 16;
+const MODAL_TITLE_TEXT_SIZE: u32 = 20;
+const MODAL_LABEL_TEXT_SIZE: u32 = 12;
+const MODAL_BODY_TEXT_SIZE: u32 = 14;
 const MODAL_WIDTH_STANDARD: f32 = 350.0;
 const MODAL_WIDTH_WIDE: f32 = 400.0;
 const PROMPT_EDITOR_HEIGHT: f32 = 160.0;
 const CONTROL_PADDING: u16 = 8;
 const COMPACT_BACK_BUTTON_PADDING: u16 = 8;
-const COMPACT_BODY_SPACING: u16 = 10;
+const COMPACT_BODY_SPACING: u32 = 10;
+
+fn prompt_editor_wrapping() -> iced::advanced::text::Wrapping {
+    iced::advanced::text::Wrapping::WordOrGlyph
+}
+
+fn prompt_card_title_wrapping() -> iced::advanced::text::Wrapping {
+    iced::advanced::text::Wrapping::WordOrGlyph
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ActionButtonTone {
+    Neutral,
+    Primary,
+    Destructive,
+}
+
+fn action_button_style(tone: ActionButtonTone) -> fn(&Theme, button::Status) -> button::Style {
+    match tone {
+        ActionButtonTone::Neutral => neutral_action_button_style,
+        ActionButtonTone::Primary => button::primary,
+        ActionButtonTone::Destructive => button::danger,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DetailToolbarAction {
+    Favorite { is_active: bool },
+    Copy,
+    Edit,
+    Delete,
+}
+
+fn detail_toolbar_button_style(
+    action: DetailToolbarAction,
+) -> fn(&Theme, button::Status) -> button::Style {
+    match action {
+        DetailToolbarAction::Favorite { is_active: true } => {
+            action_button_style(ActionButtonTone::Primary)
+        }
+        DetailToolbarAction::Favorite { is_active: false }
+        | DetailToolbarAction::Copy
+        | DetailToolbarAction::Edit => action_button_style(ActionButtonTone::Neutral),
+        DetailToolbarAction::Delete => action_button_style(ActionButtonTone::Destructive),
+    }
+}
+
+/// Styles non-destructive detail actions as neutral controls on the current
+/// surface. The background `Pair` supplies its matching readable text color
+/// for each native theme, so icons retain contrast without fixed colors.
+fn neutral_action_button_style(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = theme.extended_palette();
+    let (pair, is_disabled) = match status {
+        button::Status::Active | button::Status::Pressed => (palette.background.weak, false),
+        button::Status::Hovered => (palette.background.neutral, false),
+        button::Status::Disabled => (palette.background.weak, true),
+    };
+
+    let mut style = button::secondary(theme, status);
+    style.background = Some(iced::Background::Color(if is_disabled {
+        pair.color.scale_alpha(0.5)
+    } else {
+        pair.color
+    }));
+    style.text_color = if is_disabled {
+        pair.text.scale_alpha(0.5)
+    } else {
+        pair.text
+    };
+    style
+}
 
 const APP_LOGO_DARK_BYTES: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -43,7 +113,7 @@ const APP_LOGO_LIGHT_BYTES: &[u8] = include_bytes!(concat!(
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use std::time::Instant;
 
@@ -482,11 +552,11 @@ impl JamePromptApp {
 
     fn view_message_bar(&self) -> Element<'_, Message> {
         let Some(record) = self.notifications.active() else {
-            return Space::with_height(0).into();
+            return Space::new().height(0).into();
         };
         let notification = record.notification();
         if !matches!(notification.presentation(), Presentation::MessageBar) {
-            return Space::with_height(0).into();
+            return Space::new().height(0).into();
         }
 
         let theme = self.theme();
@@ -558,7 +628,7 @@ impl JamePromptApp {
                 .color(self.theme().extended_palette().danger.strong.color)
                 .into()
         } else {
-            Space::with_height(0).into()
+            Space::new().height(0).into()
         }
     }
 
@@ -872,7 +942,7 @@ fn initialize_tray() -> (Option<TrayHandle>, Option<String>) {
     (None, None)
 }
 
-/// Standalone function for `iced::keyboard::on_key_press` that captures hotkey combinations.
+/// Converts pressed keyboard events into hotkey capture messages.
 /// Returns `Message::FormHotkeyListeningCancelled` for Escape, `Message::FormHotkeyCaptured`
 /// for valid hotkey combinations, or `None` for unrecognized input.
 fn capture_hotkey(
@@ -1026,15 +1096,12 @@ impl JamePromptApp {
 
     pub fn subscription(&self) -> Subscription<Message> {
         let smoke_exit = if self.smoke_mode {
-            iced::keyboard::on_key_press(|key, _modifiers| {
-                if matches!(
-                    key,
-                    iced::keyboard::Key::Named(iced::keyboard::key::Named::F12)
-                ) {
-                    Some(Message::SmokeExitRequested)
-                } else {
-                    None
-                }
+            iced::keyboard::listen().filter_map(|event| match event {
+                iced::keyboard::Event::KeyPressed {
+                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::F12),
+                    ..
+                } => Some(Message::SmokeExitRequested),
+                _ => None,
             })
         } else {
             Subscription::none()
@@ -1056,7 +1123,12 @@ impl JamePromptApp {
         };
 
         let keyboard_capture = if self.listening_for_hotkey {
-            iced::keyboard::on_key_press(capture_hotkey)
+            iced::keyboard::listen().filter_map(|event| match event {
+                iced::keyboard::Event::KeyPressed { key, modifiers, .. } => {
+                    capture_hotkey(key, modifiers)
+                }
+                _ => None,
+            })
         } else {
             Subscription::none()
         };
@@ -1532,7 +1604,7 @@ impl JamePromptApp {
                         self.main_window_id = Some(id);
                         self.show_notification(NotificationEvent::WindowRestored);
                         return Task::batch([
-                            iced::window::change_mode(id, iced::window::Mode::Windowed),
+                            iced::window::set_mode(id, iced::window::Mode::Windowed),
                             iced::window::gain_focus(id),
                         ]);
                     }
@@ -1727,7 +1799,7 @@ impl JamePromptApp {
             container(
                 column![
                     self.view_prompt_controls(),
-                    Space::with_height(LIST_PANEL_SPACING),
+                    Space::new().height(LIST_PANEL_SPACING),
                     scrollable(list_col).height(Length::Fill),
                 ]
                 .padding(MAIN_PANEL_PADDING),
@@ -1744,10 +1816,12 @@ impl JamePromptApp {
         density: UiDensity,
     ) -> Element<'a, Message> {
         let is_selected = self.selected_id.as_ref() == Some(&prompt.id);
-        let title = text(&prompt.name).font(Font {
-            weight: iced::font::Weight::Bold,
-            ..Default::default()
-        });
+        let title = text(&prompt.name)
+            .font(Font {
+                weight: iced::font::Weight::Bold,
+                ..Default::default()
+            })
+            .wrapping(prompt_card_title_wrapping());
         let preview = text(prompt.preview(50))
             .size(PROMPT_PREVIEW_TEXT_SIZE)
             .color(prompt_preview_text_color(is_selected, &self.theme()));
@@ -1799,7 +1873,7 @@ impl JamePromptApp {
                 button(icon::plus())
                     .on_press(Message::NewPressed)
                     .padding(CONTROL_PADDING)
-                    .style(primary_button_style),
+                    .style(button::primary),
                 text("New prompt"),
                 tooltip::Position::Top,
             ),
@@ -1857,7 +1931,7 @@ impl JamePromptApp {
                         .style(hotkey_card_style)
                         .into()
                     } else {
-                        Space::with_height(0).into()
+                        Space::new().height(0).into()
                     };
 
                     return column![
@@ -1865,28 +1939,28 @@ impl JamePromptApp {
                             weight: iced::font::Weight::Bold,
                             ..Default::default()
                         }),
-                        Space::with_height(DETAIL_SECTION_SPACING),
+                        Space::new().height(DETAIL_SECTION_SPACING),
                         text(format!("Used {} times", p.use_count)).size(PROMPT_METADATA_TEXT_SIZE),
-                        Space::with_height(DETAIL_SECTION_SPACING),
+                        Space::new().height(DETAIL_SECTION_SPACING),
                         hotkey_row,
-                        Space::with_height(DETAIL_SECTION_SPACING),
+                        Space::new().height(DETAIL_SECTION_SPACING),
                         scrollable(
                             text(&p.content)
                                 .font(iced::Font::MONOSPACE)
                                 .size(PROMPT_CONTENT_TEXT_SIZE)
                         )
                         .height(Length::Fill),
-                        Space::with_height(DETAIL_SECTION_SPACING),
+                        Space::new().height(DETAIL_SECTION_SPACING),
                         row![
                             tooltip(
                                 button(icon::star())
                                     .on_press(Message::FavoriteToggled(p.id.clone(), !p.favorite))
                                     .padding(CONTROL_PADDING)
-                                    .style(if p.favorite {
-                                        primary_button_style
-                                    } else {
-                                        button::secondary
-                                    }),
+                                    .style(detail_toolbar_button_style(
+                                        DetailToolbarAction::Favorite {
+                                            is_active: p.favorite,
+                                        },
+                                    )),
                                 text(if p.favorite {
                                     "Remove from favorites"
                                 } else {
@@ -1898,7 +1972,7 @@ impl JamePromptApp {
                                 button(icon::copy())
                                     .on_press(Message::CopyPressed(p.id.clone(), p.content.clone()))
                                     .padding(CONTROL_PADDING)
-                                    .style(primary_button_style),
+                                    .style(detail_toolbar_button_style(DetailToolbarAction::Copy)),
                                 text("Copy to clipboard"),
                                 tooltip::Position::Top,
                             ),
@@ -1906,7 +1980,7 @@ impl JamePromptApp {
                                 button(icon::pencil())
                                     .on_press(Message::EditPressed(p.id.clone()))
                                     .padding(CONTROL_PADDING)
-                                    .style(button::secondary),
+                                    .style(detail_toolbar_button_style(DetailToolbarAction::Edit)),
                                 text("Edit prompt"),
                                 tooltip::Position::Top,
                             ),
@@ -1914,7 +1988,9 @@ impl JamePromptApp {
                                 button(icon::trash())
                                     .on_press(Message::DeletePressed(p.id.clone()))
                                     .padding(CONTROL_PADDING)
-                                    .style(button::danger),
+                                    .style(detail_toolbar_button_style(
+                                        DetailToolbarAction::Delete
+                                    )),
                                 text("Delete prompt"),
                                 tooltip::Position::Top,
                             ),
@@ -1928,11 +2004,11 @@ impl JamePromptApp {
             }
 
             column![
-                Space::with_height(Length::Fill),
+                Space::new().height(Length::Fill),
                 text(self.prompt_detail_empty_message())
                     .size(EMPTY_STATE_TEXT_SIZE)
                     .color(self.theme().extended_palette().secondary.strong.color),
-                Space::with_height(Length::Fill),
+                Space::new().height(Length::Fill),
             ]
             .align_x(alignment::Alignment::Center)
             .width(Length::Fill)
@@ -1958,6 +2034,7 @@ impl JamePromptApp {
             let content_input = text_editor(&form.content_editor)
                 .placeholder("Prompt content...")
                 .on_action(Message::FormContentEdited)
+                .wrapping(prompt_editor_wrapping())
                 .height(PROMPT_EDITOR_HEIGHT)
                 .padding(CONTROL_PADDING);
 
@@ -1978,14 +2055,15 @@ impl JamePromptApp {
             let record_button = button(icon::keyboard())
                 .on_press(Message::FormHotkeyRecordPressed)
                 .padding(CONTROL_PADDING)
-                .style(primary_button_style);
+                .style(button::primary);
 
             let clear_button = button(icon::eraser())
                 .on_press(Message::FormHotkeyClearPressed)
                 .padding(CONTROL_PADDING)
-                .style(primary_button_style);
+                .style(button::primary);
 
-            let hotkey_enabled_checkbox = checkbox("Enable hotkey", form.hotkey_enabled)
+            let hotkey_enabled_checkbox = checkbox(form.hotkey_enabled)
+                .label("Enable hotkey")
                 .on_toggle(Message::FormHotkeyEnabledToggled)
                 .size(16)
                 .style(checkbox_style);
@@ -1995,14 +2073,14 @@ impl JamePromptApp {
                 if self.listening_for_hotkey {
                     button(icon::keyboard())
                         .padding(CONTROL_PADDING)
-                        .style(primary_button_style)
+                        .style(button::primary)
                 } else {
                     record_button
                 },
                 if form.hotkey.is_empty() || self.listening_for_hotkey {
                     button(icon::eraser())
                         .padding(CONTROL_PADDING)
-                        .style(primary_button_style)
+                        .style(button::primary)
                 } else {
                     clear_button
                 },
@@ -2019,26 +2097,26 @@ impl JamePromptApp {
                             .style(button::text)
                             .padding(4),
                     ],
-                    Space::with_height(15),
+                    Space::new().height(15),
                     text("Name").size(MODAL_LABEL_TEXT_SIZE),
                     name_input,
                     self.view_form_error(Field::Name),
-                    Space::with_height(10),
+                    Space::new().height(10),
                     text("Content").size(MODAL_LABEL_TEXT_SIZE),
                     content_input,
                     self.view_form_error(Field::Content),
-                    Space::with_height(10),
+                    Space::new().height(10),
                     text("Hotkey (optional)").size(MODAL_LABEL_TEXT_SIZE),
                     hotkey_row,
                     self.view_form_error(Field::Hotkey),
-                    Space::with_height(MODAL_SECTION_SPACING),
+                    Space::new().height(MODAL_SECTION_SPACING),
                     hotkey_enabled_checkbox,
-                    Space::with_height(20),
+                    Space::new().height(20),
                     tooltip(
                         button(icon::save())
                             .on_press(Message::FormSave)
                             .padding(CONTROL_PADDING)
-                            .style(primary_button_style),
+                            .style(button::primary),
                         text("Save prompt"),
                         tooltip::Position::Top,
                     ),
@@ -2070,18 +2148,17 @@ impl JamePromptApp {
         perf::measure("ui.view_settings_modal", || {
             const THEMES: [&str; 2] = ["Dark", "Light"];
 
-            let hotkey_checkbox = checkbox("Hotkeys enabled", self.settings.hotkeys_enabled)
+            let hotkey_checkbox = checkbox(self.settings.hotkeys_enabled)
+                .label("Hotkeys enabled")
                 .on_toggle(Message::SettingsHotkeyToggled)
                 .size(16)
                 .style(checkbox_style);
 
-            let autostart_checkbox = checkbox(
-                "Start automatically on login",
-                self.settings.autostart_enabled,
-            )
-            .on_toggle(Message::SettingsAutostartToggled)
-            .size(16)
-            .style(checkbox_style);
+            let autostart_checkbox = checkbox(self.settings.autostart_enabled)
+                .label("Start automatically on login")
+                .on_toggle(Message::SettingsAutostartToggled)
+                .size(16)
+                .style(checkbox_style);
 
             let selected_theme = THEMES.iter().find(|&&t| t == self.settings.theme).copied();
             let theme_picker = pick_list(THEMES.as_slice(), selected_theme, |s| {
@@ -2094,7 +2171,7 @@ impl JamePromptApp {
                 button(icon::download())
                     .on_press(Message::SettingsExportPressed)
                     .padding(CONTROL_PADDING)
-                    .style(button::secondary),
+                    .style(action_button_style(ActionButtonTone::Neutral)),
                 text("Export prompts"),
                 tooltip::Position::Top,
             );
@@ -2103,7 +2180,7 @@ impl JamePromptApp {
                 button(icon::upload())
                     .on_press(Message::SettingsImportPressed)
                     .padding(CONTROL_PADDING)
-                    .style(button::secondary),
+                    .style(action_button_style(ActionButtonTone::Neutral)),
                 text("Import prompts"),
                 tooltip::Position::Top,
             );
@@ -2119,26 +2196,26 @@ impl JamePromptApp {
                             .style(button::text)
                             .padding(4),
                     ],
-                    Space::with_height(15),
+                    Space::new().height(15),
                     hotkey_checkbox,
-                    Space::with_height(MODAL_SECTION_SPACING),
+                    Space::new().height(MODAL_SECTION_SPACING),
                     autostart_checkbox,
-                    Space::with_height(MODAL_SECTION_SPACING),
+                    Space::new().height(MODAL_SECTION_SPACING),
                     row![
                         text("Theme").size(MODAL_BODY_TEXT_SIZE).width(Length::Fill),
                         theme_picker,
                     ]
                     .align_y(alignment::Alignment::Center),
-                    Space::with_height(MODAL_SECTION_SPACING),
+                    Space::new().height(MODAL_SECTION_SPACING),
                     row![import_button, export_button]
                         .spacing(10)
                         .align_y(alignment::Alignment::Center),
-                    Space::with_height(20),
+                    Space::new().height(20),
                     row![tooltip(
                         button(icon::save())
                             .on_press(Message::SettingsSave)
                             .padding(CONTROL_PADDING)
-                            .style(primary_button_style),
+                            .style(action_button_style(ActionButtonTone::Primary)),
                         text("Save settings"),
                         tooltip::Position::Top,
                     ),]
@@ -2177,9 +2254,9 @@ impl JamePromptApp {
             let card = container(
                 column![
                     text("Delete prompt").size(MODAL_TITLE_TEXT_SIZE),
-                    Space::with_height(15),
+                    Space::new().height(15),
                     text(format!("Delete \"{}\"?", name)).size(MODAL_BODY_TEXT_SIZE),
-                    Space::with_height(20),
+                    Space::new().height(20),
                     row![
                         button(text("Cancel"))
                             .on_press(Message::DeleteCancelPressed)
@@ -2188,7 +2265,7 @@ impl JamePromptApp {
                         button(text("Delete"))
                             .on_press(Message::DeleteConfirmPressed(id))
                             .padding(CONTROL_PADDING)
-                            .style(button::danger),
+                            .style(action_button_style(ActionButtonTone::Destructive)),
                     ]
                     .spacing(10),
                 ]
@@ -2231,7 +2308,7 @@ impl JamePromptApp {
                 .size(MODAL_BODY_TEXT_SIZE)
                 .into()
             } else {
-                Space::with_height(0).into()
+                Space::new().height(0).into()
             };
             let replace_warning: Element<'_, Message> = if controls.show_replace_warning {
                 text("This will remove all current prompts before importing the backup.")
@@ -2239,7 +2316,7 @@ impl JamePromptApp {
                     .color(self.theme().extended_palette().danger.strong.color)
                     .into()
             } else {
-                Space::with_height(0).into()
+                Space::new().height(0).into()
             };
             let duplicate_controls: Element<'_, Message> = if controls.show_duplicate_controls {
                 row![
@@ -2248,7 +2325,7 @@ impl JamePromptApp {
                         .padding(CONTROL_PADDING)
                         .style(
                             if matches!(self.pending_duplicate_mode, DuplicateMode::Skip) {
-                                primary_button_style
+                                button::primary
                             } else {
                                 button::secondary
                             }
@@ -2258,7 +2335,7 @@ impl JamePromptApp {
                         .padding(CONTROL_PADDING)
                         .style(
                             if matches!(self.pending_duplicate_mode, DuplicateMode::Overwrite) {
-                                primary_button_style
+                                button::primary
                             } else {
                                 button::secondary
                             }
@@ -2267,7 +2344,7 @@ impl JamePromptApp {
                 .spacing(10)
                 .into()
             } else {
-                Space::with_height(0).into()
+                Space::new().height(0).into()
             };
             let import_mode_controls: Element<'_, Message> = if controls.show_import_mode_controls {
                 row![
@@ -2275,7 +2352,7 @@ impl JamePromptApp {
                         .on_press(Message::ImportModeSelected(ImportMode::Merge))
                         .padding(CONTROL_PADDING)
                         .style(if matches!(self.pending_import_mode, ImportMode::Merge) {
-                            primary_button_style
+                            button::primary
                         } else {
                             button::secondary
                         }),
@@ -2284,7 +2361,7 @@ impl JamePromptApp {
                         .padding(CONTROL_PADDING)
                         .style(
                             if matches!(self.pending_import_mode, ImportMode::ReplaceAll) {
-                                primary_button_style
+                                button::primary
                             } else {
                                 button::secondary
                             }
@@ -2293,7 +2370,7 @@ impl JamePromptApp {
                 .spacing(10)
                 .into()
             } else {
-                Space::with_height(0).into()
+                Space::new().height(0).into()
             };
 
             let confirm_label = if matches!(self.pending_import_mode, ImportMode::ReplaceAll) {
@@ -2313,18 +2390,18 @@ impl JamePromptApp {
                             .style(button::text)
                             .padding(4),
                     ],
-                    Space::with_height(15),
+                    Space::new().height(15),
                     text(format!(
                         "{} prompts found in the backup",
                         preview.imported_count
                     ))
                     .size(MODAL_BODY_TEXT_SIZE),
                     duplicate_summary,
-                    Space::with_height(MODAL_SECTION_SPACING),
+                    Space::new().height(MODAL_SECTION_SPACING),
                     import_mode_controls,
                     duplicate_controls,
                     replace_warning,
-                    Space::with_height(20),
+                    Space::new().height(20),
                     row![
                         button(text("Cancel"))
                             .on_press(Message::ImportCancelPressed)
@@ -2333,7 +2410,7 @@ impl JamePromptApp {
                         button(text(confirm_label))
                             .on_press(Message::ImportConfirmPressed)
                             .padding(CONTROL_PADDING)
-                            .style(primary_button_style),
+                            .style(button::primary),
                     ]
                     .spacing(10),
                 ]
@@ -2375,15 +2452,15 @@ impl JamePromptApp {
                             .style(button::text)
                             .padding(4),
                     ],
-                    Space::with_height(15),
+                    Space::new().height(15),
                     text(APP_NAME).size(EMPTY_STATE_TEXT_SIZE).font(Font {
                         weight: iced::font::Weight::Bold,
                         ..Default::default()
                     }),
                     text(format!("v{}", APP_VERSION)).size(MODAL_BODY_TEXT_SIZE),
-                    Space::with_height(10),
+                    Space::new().height(10),
                     text(APP_DESCRIPTION).size(MODAL_BODY_TEXT_SIZE),
-                    Space::with_height(10),
+                    Space::new().height(10),
                     text(format!("(c) {} {}", year, "@roymejia2217")).size(MODAL_LABEL_TEXT_SIZE),
                 ]
                 .padding(20),
@@ -2427,19 +2504,22 @@ fn view_prompt_list_favorite_indicator(favorite: bool) -> Element<'static, Messa
             .width(width)
             .into()
     } else {
-        Space::with_width(width).into()
+        Space::new().width(width).into()
     }
 }
 
 fn image_handle_for_theme(theme: &Theme) -> iced::widget::image::Handle {
-    let bytes = if matches!(theme, Theme::Light) {
-        APP_LOGO_LIGHT_BYTES
+    if matches!(theme, Theme::Light) {
+        (*APP_LOGO_LIGHT_HANDLE).clone()
     } else {
-        APP_LOGO_DARK_BYTES
-    };
-
-    iced::widget::image::Handle::from_bytes(bytes)
+        (*APP_LOGO_DARK_HANDLE).clone()
+    }
 }
+
+static APP_LOGO_DARK_HANDLE: LazyLock<iced::widget::image::Handle> =
+    LazyLock::new(|| iced::widget::image::Handle::from_bytes(APP_LOGO_DARK_BYTES));
+static APP_LOGO_LIGHT_HANDLE: LazyLock<iced::widget::image::Handle> =
+    LazyLock::new(|| iced::widget::image::Handle::from_bytes(APP_LOGO_LIGHT_BYTES));
 
 fn prompt_card_style(is_selected: bool, theme: &Theme) -> container::Style {
     let palette = theme.extended_palette();
@@ -2532,38 +2612,6 @@ fn footer_container_style(theme: &Theme) -> container::Style {
     }
 }
 
-fn primary_button_style(theme: &Theme, status: button::Status) -> button::Style {
-    let palette = theme.extended_palette();
-    let base = button::Style {
-        background: Some(iced::Background::Color(palette.primary.strong.color)),
-        text_color: palette.primary.strong.text,
-        border: iced::Border {
-            radius: 4.0.into(),
-            width: 0.0,
-            color: Color::TRANSPARENT,
-        },
-        ..Default::default()
-    };
-    match status {
-        button::Status::Active => base,
-        button::Status::Hovered => button::Style {
-            background: Some(iced::Background::Color(palette.primary.base.color)),
-            text_color: palette.primary.base.text,
-            ..base
-        },
-        button::Status::Pressed => button::Style {
-            background: Some(iced::Background::Color(palette.primary.weak.color)),
-            text_color: palette.primary.weak.text,
-            ..base
-        },
-        button::Status::Disabled => button::Style {
-            background: Some(iced::Background::Color(palette.background.weak.color)),
-            text_color: palette.background.weak.text,
-            ..base
-        },
-    }
-}
-
 fn search_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
     let palette = theme.extended_palette();
     let base = text_input::Style {
@@ -2588,7 +2636,7 @@ fn search_input_style(theme: &Theme, status: text_input::Status) -> text_input::
             },
             ..base
         },
-        text_input::Status::Focused => text_input::Style {
+        text_input::Status::Focused { is_hovered: _ } => text_input::Style {
             border: iced::Border {
                 width: 2.0,
                 color: palette.primary.strong.color,
@@ -2657,7 +2705,7 @@ fn pick_list_style(theme: &Theme, status: pick_list::Status) -> pick_list::Style
             },
             ..base
         },
-        pick_list::Status::Opened => pick_list::Style {
+        pick_list::Status::Opened { is_hovered: _ } => pick_list::Style {
             border: Border {
                 color: palette.primary.strong.color,
                 width: 2.0,
@@ -2672,15 +2720,142 @@ fn pick_list_style(theme: &Theme, status: pick_list::Status) -> pick_list::Style
 mod tests {
     use super::*;
 
+    #[test]
+    fn prompt_editor_wraps_unbreakable_tokens_at_glyph_boundaries() {
+        assert_eq!(
+            prompt_editor_wrapping(),
+            iced::advanced::text::Wrapping::WordOrGlyph
+        );
+    }
+
+    #[test]
+    fn prompt_card_title_wraps_long_segments_at_glyph_boundaries() {
+        assert_eq!(
+            prompt_card_title_wrapping(),
+            iced::advanced::text::Wrapping::WordOrGlyph
+        );
+    }
+
+    #[test]
+    fn detail_toolbar_uses_semantic_action_styles() {
+        let theme = Theme::Dark;
+        let status = button::Status::Active;
+
+        assert_eq!(
+            detail_toolbar_button_style(DetailToolbarAction::Favorite { is_active: true })(
+                &theme, status
+            ),
+            button::primary(&theme, status)
+        );
+        assert_eq!(
+            detail_toolbar_button_style(DetailToolbarAction::Favorite { is_active: false })(
+                &theme, status
+            ),
+            neutral_action_button_style(&theme, status)
+        );
+        assert_eq!(
+            detail_toolbar_button_style(DetailToolbarAction::Copy)(&theme, status),
+            neutral_action_button_style(&theme, status)
+        );
+        assert_eq!(
+            detail_toolbar_button_style(DetailToolbarAction::Edit)(&theme, status),
+            neutral_action_button_style(&theme, status)
+        );
+        assert_eq!(
+            detail_toolbar_button_style(DetailToolbarAction::Delete)(&theme, status),
+            button::danger(&theme, status)
+        );
+    }
+
+    #[test]
+    fn action_button_taxonomy_maps_each_role_to_its_theme_aware_style() {
+        let theme = Theme::Dark;
+        let status = button::Status::Active;
+
+        assert_eq!(
+            action_button_style(ActionButtonTone::Neutral)(&theme, status),
+            neutral_action_button_style(&theme, status)
+        );
+        assert_eq!(
+            action_button_style(ActionButtonTone::Primary)(&theme, status),
+            button::primary(&theme, status)
+        );
+        assert_eq!(
+            action_button_style(ActionButtonTone::Destructive)(&theme, status),
+            button::danger(&theme, status)
+        );
+    }
+
+    #[test]
+    fn toolbar_neutral_actions_use_the_background_pair_for_each_theme() {
+        for theme in [Theme::Dark, Theme::Light] {
+            let pair = theme.extended_palette().background.weak;
+            let style = neutral_action_button_style(&theme, button::Status::Active);
+
+            assert_eq!(style.background, Some(iced::Background::Color(pair.color)));
+            assert_eq!(style.text_color, pair.text);
+        }
+    }
+
+    #[test]
+    fn toolbar_neutral_actions_preserve_native_interaction_state_semantics() {
+        let theme = Theme::Dark;
+        let palette = theme.extended_palette();
+
+        let hovered = neutral_action_button_style(&theme, button::Status::Hovered);
+        assert_eq!(
+            hovered.background,
+            Some(iced::Background::Color(palette.background.neutral.color))
+        );
+        assert_eq!(hovered.text_color, palette.background.neutral.text);
+
+        let pressed = neutral_action_button_style(&theme, button::Status::Pressed);
+        assert_eq!(
+            pressed.background,
+            Some(iced::Background::Color(palette.background.weak.color))
+        );
+        assert_eq!(pressed.text_color, palette.background.weak.text);
+
+        let disabled = neutral_action_button_style(&theme, button::Status::Disabled);
+        assert_eq!(
+            disabled.background,
+            Some(iced::Background::Color(
+                palette.background.weak.color.scale_alpha(0.5)
+            ))
+        );
+        assert_eq!(
+            disabled.text_color,
+            palette.background.weak.text.scale_alpha(0.5)
+        );
+    }
+
     // Reproduction tests for bug: status ignored and theme mismatch
     #[test]
     fn repro_button_hover_state_is_ignored() {
-        let active = primary_button_style(&Theme::Dark, button::Status::Active);
-        let hovered = primary_button_style(&Theme::Dark, button::Status::Hovered);
+        let active = button::primary(&Theme::Dark, button::Status::Active);
+        let hovered = button::primary(&Theme::Dark, button::Status::Hovered);
         assert_ne!(
             active.background, hovered.background,
             "Bug: button hover state should change background color"
         );
+    }
+
+    #[test]
+    fn primary_button_uses_official_palette_pairing() {
+        let palette = Theme::Dark.extended_palette();
+        let active = button::primary(&Theme::Dark, button::Status::Active);
+        let hovered = button::primary(&Theme::Dark, button::Status::Hovered);
+
+        assert_eq!(
+            active.background,
+            Some(iced::Background::Color(palette.primary.base.color))
+        );
+        assert_eq!(active.text_color, palette.primary.base.text);
+        assert_eq!(
+            hovered.background,
+            Some(iced::Background::Color(palette.primary.strong.color))
+        );
+        assert_eq!(hovered.text_color, palette.primary.base.text);
     }
 
     #[test]
@@ -2740,6 +2915,18 @@ mod tests {
             }
             _ => panic!("Light theme should use embedded logo bytes"),
         }
+    }
+
+    #[test]
+    fn test_image_handle_identity_is_stable_per_theme() {
+        let dark_first = image_handle_for_theme(&Theme::Dark);
+        let dark_second = image_handle_for_theme(&Theme::Dark);
+        let light_first = image_handle_for_theme(&Theme::Light);
+        let light_second = image_handle_for_theme(&Theme::Light);
+
+        assert_eq!(dark_first.id(), dark_second.id());
+        assert_eq!(light_first.id(), light_second.id());
+        assert_ne!(dark_first.id(), light_first.id());
     }
 
     #[test]
@@ -2992,55 +3179,64 @@ mod tests {
         assert_eq!(hotkey.border, unselected_prompt.border);
     }
 
-    // Group D: primary_button_style
+    // Group D: native primary button
     #[test]
     fn test_primary_button_style_has_background() {
-        let style = primary_button_style(&Theme::Dark, button::Status::Active);
-        let expected = Theme::Dark.extended_palette().primary.strong.color;
+        let style = button::primary(&Theme::Dark, button::Status::Active);
+        let expected = Theme::Dark.extended_palette().primary.base.color;
         assert_eq!(style.background, Some(iced::Background::Color(expected)));
     }
 
     #[test]
     fn test_primary_button_style_has_text_color() {
-        let style = primary_button_style(&Theme::Dark, button::Status::Active);
-        let expected = Theme::Dark.extended_palette().primary.strong.text;
+        let style = button::primary(&Theme::Dark, button::Status::Active);
+        let expected = Theme::Dark.extended_palette().primary.base.text;
         assert_eq!(style.text_color, expected);
     }
 
     #[test]
-    fn test_primary_button_style_has_border_radius() {
-        let style = primary_button_style(&Theme::Dark, button::Status::Active);
-        assert_eq!(style.border.radius, 4.0.into());
+    fn test_primary_button_hover_uses_strong_background_and_base_text() {
+        let style = button::primary(&Theme::Dark, button::Status::Hovered);
+        let palette = Theme::Dark.extended_palette();
+        assert_eq!(
+            style.background,
+            Some(iced::Background::Color(palette.primary.strong.color))
+        );
+        assert_eq!(style.text_color, palette.primary.base.text);
     }
 
     #[test]
-    fn test_primary_button_style_light_differs_from_dark() {
-        let dark = primary_button_style(&Theme::Dark, button::Status::Disabled);
-        let light = primary_button_style(&Theme::Light, button::Status::Disabled);
-        assert_ne!(
-            dark.background, light.background,
-            "Disabled button background should differ between themes"
+    fn test_primary_button_disabled_scales_the_native_primary_pair() {
+        let palette = Theme::Dark.extended_palette();
+        let style = button::primary(&Theme::Dark, button::Status::Disabled);
+        assert_eq!(
+            style.background,
+            Some(iced::Background::Color(
+                palette.primary.base.color.scale_alpha(0.5)
+            ))
         );
+        assert_eq!(style.text_color, palette.primary.base.text.scale_alpha(0.5));
     }
 
     #[test]
     fn test_primary_button_style_hovered_differs_from_active() {
-        let active = primary_button_style(&Theme::Dark, button::Status::Active);
-        let hovered = primary_button_style(&Theme::Dark, button::Status::Hovered);
+        let active = button::primary(&Theme::Dark, button::Status::Active);
+        let hovered = button::primary(&Theme::Dark, button::Status::Hovered);
         assert_ne!(active.background, hovered.background);
     }
 
     #[test]
-    fn test_primary_button_style_pressed_differs_from_active() {
-        let active = primary_button_style(&Theme::Dark, button::Status::Active);
-        let pressed = primary_button_style(&Theme::Dark, button::Status::Pressed);
-        assert_ne!(active.background, pressed.background);
+    fn test_primary_button_style_pressed_matches_active() {
+        let active = button::primary(&Theme::Dark, button::Status::Active);
+        let pressed = button::primary(&Theme::Dark, button::Status::Pressed);
+        assert_eq!(active.background, pressed.background);
+        assert_eq!(active.text_color, pressed.text_color);
     }
 
     #[test]
     fn test_primary_button_style_disabled_differs_from_active() {
-        let active = primary_button_style(&Theme::Dark, button::Status::Active);
-        let disabled = primary_button_style(&Theme::Dark, button::Status::Disabled);
+        let active = button::primary(&Theme::Dark, button::Status::Active);
+        let disabled = button::primary(&Theme::Dark, button::Status::Disabled);
         assert_ne!(active.background, disabled.background);
     }
 
@@ -3218,7 +3414,10 @@ mod tests {
     #[test]
     fn test_search_input_style_focused_differs_from_active() {
         let active = search_input_style(&Theme::Dark, text_input::Status::Active);
-        let focused = search_input_style(&Theme::Dark, text_input::Status::Focused);
+        let focused = search_input_style(
+            &Theme::Dark,
+            text_input::Status::Focused { is_hovered: false },
+        );
         assert_ne!(active.border.color, focused.border.color);
     }
 
@@ -3313,7 +3512,10 @@ mod tests {
     #[test]
     fn test_pick_list_style_opened_differs_from_active() {
         let active = pick_list_style(&Theme::Dark, pick_list::Status::Active);
-        let opened = pick_list_style(&Theme::Dark, pick_list::Status::Opened);
+        let opened = pick_list_style(
+            &Theme::Dark,
+            pick_list::Status::Opened { is_hovered: false },
+        );
         assert_ne!(active.border.width, opened.border.width);
     }
 
