@@ -1,0 +1,39 @@
+name: Pull Request Governance
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-pull-request-governance:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout trusted base revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install title validation dependencies
+        run: npm ci
+
+      - name: Validate pull request title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$PR_TITLE" | npm exec --no -- commitlint --verbose
+
+      - name: Validate pull request description
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pull-request.md"
+          python3 scripts/validate_pr_description.py --body-file "$RUNNER_TEMP/pull-request.md"
