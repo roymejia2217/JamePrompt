@@ -60,7 +60,7 @@ pub(crate) fn close(id: window::Id) -> Task<Message> {
 
 pub(crate) fn restore(id: window::Id) -> Task<Message> {
     Task::batch([
-        window::change_mode(id, window::Mode::Windowed),
+        window::set_mode(id, window::Mode::Windowed),
         window::gain_focus(id),
     ])
 }

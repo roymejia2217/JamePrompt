@@ -2,6 +2,7 @@
 name = "jame-prompt"
 version = "1.1.0"
 edition = "2021"
+rust-version = "1.88"
 authors = ["Roy Mejia"]
 description = "JamePrompt — Lightweight and minimal local prompt manager"
 license = "MIT"
@@ -13,7 +14,7 @@ exclude = [
 ]
 
 [dependencies]
-iced = { version = "0.13.1", features = ["tokio", "image"] }
+iced = { version = "=0.14.0", features = ["tokio", "image", "advanced"] }
 tokio = { version = "1", features = ["rt", "time"] }
 iced_lucide = "0.1.0"
 rusqlite = { version = "0.31.0", features = ["bundled"] }

@@ -5,6 +5,8 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
 
+const APP_WINDOW_CLASS: &str = "io.github.roymejia2217.JamePrompt";
+
 fn xdotool(args: &[&str]) {
     let output = Command::new("xdotool")
         .args(args)
@@ -14,21 +16,6 @@ fn xdotool(args: &[&str]) {
     assert!(
         output.status.success(),
         "xdotool {:?} failed\nstdout:\n{}\nstderr:\n{}",
-        args,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn wmctrl(args: &[&str]) {
-    let output = Command::new("wmctrl")
-        .args(args)
-        .output()
-        .expect("wmctrl should be available");
-
-    assert!(
-        output.status.success(),
-        "wmctrl {:?} failed\nstdout:\n{}\nstderr:\n{}",
         args,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
@@ -112,10 +99,9 @@ fn ui_smoke_runs_real_window_activity_and_writes_a_report() {
         .spawn()
         .expect("UI smoke binary should start");
 
-    let window_id = wait_for_window("jame-prompt", Duration::from_secs(30));
-    wmctrl(&["-ia", &window_id]);
+    let window_id = wait_for_window(APP_WINDOW_CLASS, Duration::from_secs(30));
     xdotool(&["windowmap", "--sync", &window_id]);
-    xdotool(&["windowactivate", "--sync", &window_id]);
+    xdotool(&["windowfocus", "--sync", &window_id]);
     let interaction_rounds = ["Alpha", "Beta", "Gamma", "Delta"];
 
     for text_value in interaction_rounds {
