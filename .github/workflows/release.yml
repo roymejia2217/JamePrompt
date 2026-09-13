@@ -29,6 +29,7 @@ jobs:
       - name: Checkout release history
         uses: actions/checkout@v6
         with:
+          ref: ${{ env.RELEASE_REF }}
           fetch-depth: 0
 
       - name: Fetch protected main and tags
@@ -45,6 +46,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Prepare release version
         run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --apply
@@ -83,6 +86,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Prepare release version
         run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --apply
@@ -144,6 +149,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Prepare release version
         run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --apply
@@ -196,6 +203,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Prepare release version
         run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --apply
@@ -255,6 +264,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Prepare release version
         shell: pwsh
@@ -408,6 +419,8 @@ jobs:
     steps:
       - name: Checkout release tooling
         uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Download artifacts from current run
         if: ${{ inputs.publish_run_id == '' }}
