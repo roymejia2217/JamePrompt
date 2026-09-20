@@ -50,8 +50,9 @@ fn all_external_github_actions_are_pinned_to_full_commit_shas() {
     let mut checked = 0usize;
 
     for path in workflow_paths() {
-        let content = fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("Expected {} to be readable: {}", path.display(), error));
+        let content = fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!("Expected {} to be readable: {}", path.display(), error)
+        });
 
         for (index, line) in content.lines().enumerate() {
             let Some(action) = external_action_ref(line) else {
