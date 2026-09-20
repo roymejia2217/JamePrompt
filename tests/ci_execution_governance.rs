@@ -21,10 +21,7 @@ fn job_section<'a>(workflow: &'a str, job: &str, next_job: Option<&str>) -> &'a 
     match next_job {
         Some(next) => {
             let end = format!("\n  {next}:\n");
-            section
-                .split(&end)
-                .next()
-                .expect("job section terminator")
+            section.split(&end).next().expect("job section terminator")
         }
         None => section,
     }
@@ -57,7 +54,11 @@ fn protected_ci_jobs_have_explicit_fail_closed_timeouts() {
     let ci = read_file(".github/workflows/ci.yml");
 
     let expectations = [
-        ("validate-commit-messages", Some("test-linux"), "timeout-minutes: 10"),
+        (
+            "validate-commit-messages",
+            Some("test-linux"),
+            "timeout-minutes: 10",
+        ),
         ("test-linux", Some("test-windows"), "timeout-minutes: 45"),
         ("test-windows", Some("test_rpm"), "timeout-minutes: 45"),
         ("test_rpm", Some("test"), "timeout-minutes: 45"),
