@@ -377,3 +377,19 @@ fn windows_distribution_docs_capture_uipi_auto_paste_boundary() {
         ],
     );
 }
+
+
+#[test]
+fn ci_validates_github_workflow_yaml_syntax() {
+    let ci = read_file(".github/workflows/ci.yml");
+
+    assert_contains_all(
+        &ci,
+        &[
+            "python3-yaml",
+            "Validate GitHub workflow YAML syntax",
+            "python3 scripts/validate_workflow_yaml.py --self-test",
+            "python3 scripts/validate_workflow_yaml.py .github/workflows",
+        ],
+    );
+}
