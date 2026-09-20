@@ -32,7 +32,7 @@ jobs:
       - name: Validate pull request commits
         run: npm exec --no -- commitlint --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" --verbose
 
-  test:
+  test-linux:
     runs-on: ubuntu-latest
 
     steps:
@@ -68,5 +68,31 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Run tests
-        run: cargo test --locked
+      - name: Run Linux tests
+        run: cargo test --locked --all-targets
+
+  test-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run Windows tests
+        run: cargo test --locked --all-targets
+
+  test:
+    if: always()
+    runs-on: ubuntu-latest
+    needs:
+      - test-linux
+      - test-windows
+
+    steps:
+      - name: Require Linux and Windows test jobs
+        env:
+          LINUX_RESULT: ${{ needs.test-linux.result }}
+          WINDOWS_RESULT: ${{ needs.test-windows.result }}
+        run: |
+          test "$LINUX_RESULT" = "success"
+          test "$WINDOWS_RESULT" = "success"
