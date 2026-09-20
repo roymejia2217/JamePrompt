@@ -1260,7 +1260,9 @@ impl JamePromptApp {
                                             );
                                         } else {
                                             self.pending_hotkey_name = Some(p.name);
-                                            self.show_notification(NotificationEvent::PasteRequested);
+                                            self.show_notification(
+                                                NotificationEvent::PasteRequested,
+                                            );
                                         }
                                     }
                                     crate::hotkeys::PasteRequest::ClipboardRequired(content) => {
@@ -2776,7 +2778,10 @@ mod tests {
         let expected = "JamePrompt test ñ 😀\nsecond line";
 
         assert!(clipboard_matches_expected_prompt(expected, Some(expected)));
-        assert!(!clipboard_matches_expected_prompt(expected, Some("OLD_VALUE")));
+        assert!(!clipboard_matches_expected_prompt(
+            expected,
+            Some("OLD_VALUE")
+        ));
         assert!(!clipboard_matches_expected_prompt(expected, None));
     }
 

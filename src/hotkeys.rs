@@ -174,8 +174,9 @@ impl HotkeyService {
 
 /// Starts automatic paste using the backend selected for the active platform.
 pub fn request_paste(content: String) -> PasteRequest {
-    perf::measure("hotkeys.request_paste", || {
-        match crate::platform::hotkey_backend_kind() {
+    perf::measure(
+        "hotkeys.request_paste",
+        || match crate::platform::hotkey_backend_kind() {
             HotkeyBackendKind::Native => PasteRequest::ClipboardRequired(content),
             #[cfg(target_os = "linux")]
             HotkeyBackendKind::Portal => {
@@ -188,8 +189,8 @@ pub fn request_paste(content: String) -> PasteRequest {
             #[cfg(not(target_os = "linux"))]
             HotkeyBackendKind::Portal => PasteRequest::Unavailable,
             HotkeyBackendKind::Unavailable => PasteRequest::Unavailable,
-        }
-    })
+        },
+    )
 }
 
 /// Injects Ctrl+V after the UI runtime has written and verified the clipboard.

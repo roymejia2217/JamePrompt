@@ -1246,10 +1246,7 @@ mod tests {
         assert!(poll_paste_outcome().is_none());
         PASTE_PENDING.store(true, Ordering::Release);
         finish_paste_with(PasteOutcome::Completed);
-        assert_eq!(
-            poll_paste_outcome(),
-            Some(PasteOutcome::Completed)
-        );
+        assert_eq!(poll_paste_outcome(), Some(PasteOutcome::Completed));
     }
 
     #[test]
