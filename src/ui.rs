@@ -1303,7 +1303,7 @@ impl JamePromptApp {
                         self.show_notification(NotificationEvent::PasteFailed);
                     }
 
-                    Task::none()
+                    return Task::none();
                 }
                 Message::FormNameChanged(name) => {
                     if !name.trim().is_empty() {
