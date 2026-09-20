@@ -8,6 +8,7 @@ fn read_file(relative: &str) -> String {
     let path = repo_path(relative);
     std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("Expected {} to be readable: {}", path.display(), error))
+        .replace("\r\n", "\n")
 }
 
 fn assert_contains_all(content: &str, expected: &[&str]) {
