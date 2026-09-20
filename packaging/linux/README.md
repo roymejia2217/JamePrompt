@@ -27,7 +27,7 @@ reduced in any distributed version.
 |---|---|---|---|---|
 | GTK 3 UI and tray event loop | `libgtk-3-0` | `gtk3` | `gtk3` | Bundled or provided by the host image build |
 | AppIndicator tray support | `libayatana-appindicator3-1` or `libappindicator3-1` | `libappindicator-gtk3` or Ayatana equivalent | `libappindicator-gtk3` or Ayatana equivalent | Bundled when available |
-| X11 global hotkeys | `libx11-6`, `libxtst6`, `libxkbcommon0` | `libx11`, `libxtst`, `libxkbcommon` | `libX11`, `libXtst`, `libxkbcommon` | Bundled or host-provided |
+| X11 global hotkeys | `libx11-6`, `libxtst6`, `libxkbcommon0`, `libxkbcommon-x11-0` | `libx11`, `libxtst`, `libxkbcommon`, `libxkbcommon-x11` | `libX11`, `libXtst`, `libxkbcommon`, `libxkbcommon-x11` | AppImage bundles libxkbcommon-x11.so.0 explicitly because the X11 keyboard library is loaded at runtime |
 | Paste simulation | `libxdo3` | `xdotool` | `libxdo` | Bundled or host-provided |
 | Font and image rendering | `libfontconfig1`, `libfreetype6`, `libgdk-pixbuf-2.0-0` | `fontconfig`, `freetype2`, `gdk-pixbuf2` | `fontconfig`, `freetype`, `gdk-pixbuf2` | Bundled or host-provided |
 | Desktop integration | `desktop-file-utils`, `hicolor-icon-theme` | `desktop-file-utils`, `hicolor-icon-theme` | `desktop-file-utils`, `hicolor-icon-theme` | AppImage desktop integration tools |
@@ -51,5 +51,4 @@ Validate every release artifact before publishing:
 13. Disable autostart and confirm the autostart desktop entry is removed.
 14. Uninstall the package and confirm system files are removed.
 
-Wayland sessions may restrict global hotkeys and paste simulation. A package is
-release-ready only for environments where all required features pass validation.
+Wayland uses the XDG GlobalShortcuts and RemoteDesktop/Clipboard portal paths, while X11 uses the native global-hotkey and input-injection path. A package is release-ready only after the applicable platform smoke and manual validation steps pass.

@@ -61,7 +61,7 @@ Requires Rust 1.88 or newer. Iced is pinned to 0.14.0; build with `--locked`.
 | **Rust toolchain** | Builds and runs the application from source. | `rustup` |
 | **pkg-config** | Locates native libraries required by Rust crates. | `sudo apt-get install pkg-config` |
 | **GTK 3 development libraries** | Provide the Linux GUI and tray integration layers. | `sudo apt-get install libgtk-3-dev` |
-| **X11 development libraries** | Support global hotkeys and paste simulation. | `sudo apt-get install libx11-dev libxtst-dev libxkbcommon-dev` |
+| **X11 development libraries** | Support global hotkeys, keyboard mapping, and paste simulation. | `sudo apt-get install libx11-dev libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev` |
 | **AppIndicator support** | Enables Linux tray indicator support when the desktop environment provides it. | `sudo apt-get install libayatana-appindicator3-dev` |
 | **`libxdo` development library** | Supports simulated paste actions. | `sudo apt-get install libxdo-dev` |
 | **Python 3 Pillow** | Generates hicolor launcher icon sizes during Debian packaging. | `sudo apt-get install python3-pil` |
@@ -69,6 +69,7 @@ Requires Rust 1.88 or newer. Iced is pinned to 0.14.0; build with `--locked`.
 **Notes:**
 - On GNOME Wayland, tray uses destroy/recreate (Hidden unsupported); auto-paste needs RemoteDesktop keyboard permission (dialog may appear at start/prewarm).
 - Global hotkeys on Wayland use the XDG GlobalShortcuts portal.
+- Linux X11 requires the xkbcommon X11 runtime (`libxkbcommon-x11-0` on Debian/Ubuntu or `libxkbcommon-x11` on Arch/Fedora-family systems).
 - Tray visibility depends on the desktop environment having an active AppIndicator or status notifier implementation.
 
 ---
