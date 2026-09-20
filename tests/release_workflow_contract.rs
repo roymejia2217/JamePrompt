@@ -107,7 +107,6 @@ fn windows_release_job_smokes_release_binary_before_packaging() {
     );
 }
 
-
 #[test]
 fn prerelease_notes_describe_current_multiplatform_validation_scope() {
     let workflow = read_release_workflow();
