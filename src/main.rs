@@ -119,7 +119,8 @@ fn main() -> iced::Result {
 #[cfg(test)]
 mod tests {
     use crate::launch::{
-        initial_window_visible, should_run_perf_smoke_from_args, should_run_ui_smoke_from_args,
+        initial_window_visible, should_run_native_hotkey_smoke_from_args,
+        should_run_perf_smoke_from_args, should_run_ui_smoke_from_args,
         should_show_window_after_hidden_start, should_start_minimized_from_args,
     };
     use std::ffi::OsString;
@@ -177,6 +178,23 @@ mod tests {
         let args = [OsString::from("jame-prompt")];
 
         assert!(!should_run_ui_smoke_from_args(args));
+    }
+
+    #[test]
+    fn should_run_native_hotkey_smoke_from_args_returns_true_for_native_hotkey_smoke() {
+        let args = [
+            OsString::from("jame-prompt"),
+            OsString::from("--native-hotkey-smoke"),
+        ];
+
+        assert!(should_run_native_hotkey_smoke_from_args(args));
+    }
+
+    #[test]
+    fn should_run_native_hotkey_smoke_from_args_returns_false_without_native_hotkey_smoke() {
+        let args = [OsString::from("jame-prompt")];
+
+        assert!(!should_run_native_hotkey_smoke_from_args(args));
     }
 
     #[test]
