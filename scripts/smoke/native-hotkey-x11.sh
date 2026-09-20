@@ -40,6 +40,7 @@ fi
 
 export XDG_SESSION_TYPE=x11
 export GDK_BACKEND=x11
+export GTK_A11Y=none
 export JAME_PROMPT_UI_SMOKE_DURATION_MS=30000
 
 "$BINARY" --native-hotkey-smoke >"$APP_LOG" 2>&1 &
@@ -82,6 +83,7 @@ if [[ -z "$TARGET_WINDOW" ]]; then
     fail "GTK target window did not appear"
 fi
 
+xdotool windowmap --sync "$TARGET_WINDOW"
 xdotool windowfocus --sync "$TARGET_WINDOW"
 FOCUSED_WINDOW="$(xdotool getwindowfocus)"
 if [[ "$FOCUSED_WINDOW" != "$TARGET_WINDOW" ]]; then
