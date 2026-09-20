@@ -30,10 +30,18 @@ fi
 
 require_command cargo
 require_command install
+require_command ldconfig
 require_command linuxdeploy
 require_command appimagetool
 require_file "assets/icons/app_icon.png"
 require_file "packaging/linux/${APP_ID}.desktop"
+
+XKBCOMMON_X11_LIB="$(ldconfig -p | awk '$1 == "libxkbcommon-x11.so.0" { print $NF; exit }')"
+if [ -z "$XKBCOMMON_X11_LIB" ]; then
+    echo "Unable to locate libxkbcommon-x11.so.0 for AppImage bundling" >&2
+    exit 1
+fi
+require_file "$XKBCOMMON_X11_LIB"
 
 if [ "${JAME_PROMPT_REUSE_RELEASE_BUILD:-0}" != "1" ]; then
     cargo build --release --locked
@@ -58,5 +66,11 @@ exec "${HERE}/usr/bin/jame-prompt" "$@"
 APPRUN
 chmod 755 "$APPDIR/AppRun"
 
-linuxdeploy --appdir "$APPDIR" --desktop-file "$APPDIR/${DESKTOP_APP_ID}.desktop" --icon-file "$APPDIR/${APP_ID}.png"
+linuxdeploy --appdir "$APPDIR" --desktop-file "$APPDIR/${DESKTOP_APP_ID}.desktop" --icon-file "$APPDIR/${APP_ID}.png" --library "$XKBCOMMON_X11_LIB"
+
+if ! find "$APPDIR/usr/lib" \( -type f -o -type l \) -name 'libxkbcommon-x11.so*' -print -quit | grep -q .; then
+    echo "AppImage is missing bundled libxkbcommon-x11" >&2
+    exit 1
+fi
+
 ARCH="$ARCH" VERSION="$VERSION" appimagetool "$APPDIR" "${DIST_DIR}/${APP_ID}-${VERSION}-${ARCH}.AppImage"
