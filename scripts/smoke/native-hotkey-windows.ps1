@@ -42,7 +42,24 @@ public static class JamePromptNativeHotkeySmokeInput
     private struct InputUnion
     {
         [FieldOffset(0)]
+        public MOUSEINPUT mi;
+
+        [FieldOffset(0)]
         public KEYBDINPUT ki;
+
+        [FieldOffset(0)]
+        public HARDWAREINPUT hi;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public UIntPtr dwExtraInfo;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -53,6 +70,14 @@ public static class JamePromptNativeHotkeySmokeInput
         public uint dwFlags;
         public uint time;
         public UIntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct HARDWAREINPUT
+    {
+        public uint uMsg;
+        public ushort wParamL;
+        public ushort wParamH;
     }
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -85,10 +110,21 @@ public static class JamePromptNativeHotkeySmokeInput
             Key(VK_CONTROL, KEYEVENTF_KEYUP),
         };
 
-        uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+        int inputSize = Marshal.SizeOf(typeof(INPUT));
+        uint sent = SendInput((uint)inputs.Length, inputs, inputSize);
         if (sent != inputs.Length)
         {
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "SendInput did not inject the complete smoke hotkey");
+            int error = Marshal.GetLastWin32Error();
+            throw new Win32Exception(
+                error,
+                String.Format(
+                    "SendInput inserted {0}/{1} events with INPUT size {2}; GetLastError={3}",
+                    sent,
+                    inputs.Length,
+                    inputSize,
+                    error
+                )
+            );
         }
     }
 }
