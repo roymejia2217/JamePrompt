@@ -313,3 +313,68 @@ fn release_workflow_publishes_checksums_with_artifacts() {
         ],
     );
 }
+
+
+#[test]
+fn linux_native_packages_declare_xkbcommon_x11_runtime_dependency() {
+    let deb = read_file("packaging/linux/build-deb.sh");
+    let arch = read_file("packaging/arch/PKGBUILD");
+    let rpm = read_file("packaging/rpm/jame-prompt.spec");
+    let docs = read_file("packaging/linux/README.md");
+    let readme = read_file("README.md");
+
+    assert!(
+        deb.contains("libxkbcommon-x11-0"),
+        "Debian/Ubuntu package must depend on libxkbcommon-x11-0 for the native X11 keyboard backend"
+    );
+    assert!(
+        arch.contains("'libxkbcommon-x11'"),
+        "Arch package must depend on libxkbcommon-x11 for the native X11 keyboard backend"
+    );
+    assert!(
+        rpm.contains("Requires:       libxkbcommon-x11"),
+        "Fedora/RHEL package must depend on libxkbcommon-x11 for the native X11 keyboard backend"
+    );
+    assert_contains_all(
+        &docs,
+        &[
+            "libxkbcommon-x11-0",
+            "libxkbcommon-x11",
+            "bundles libxkbcommon-x11.so.0",
+        ],
+    );
+    assert!(
+        readme.contains("libxkbcommon-x11-dev"),
+        "Source-build prerequisites must install the X11 xkbcommon development/runtime package"
+    );
+}
+
+#[test]
+fn appimage_explicitly_bundles_dlopen_xkbcommon_x11_runtime() {
+    let appimage = read_file("packaging/appimage/build-appimage.sh");
+
+    assert_contains_all(
+        &appimage,
+        &[
+            "libxkbcommon-x11.so.0",
+            "XKBCOMMON_X11_LIB",
+            "--library \"$XKBCOMMON_X11_LIB\"",
+            "AppImage is missing bundled libxkbcommon-x11",
+        ],
+    );
+}
+
+#[test]
+fn windows_distribution_docs_capture_uipi_auto_paste_boundary() {
+    let docs = read_file("docs/distribution/windows.md");
+
+    assert_contains_all(
+        &docs,
+        &[
+            "User Interface Privilege Isolation (UIPI)",
+            "equal or lower integrity level",
+            "elevated",
+            "Run JamePrompt at the same integrity level",
+        ],
+    );
+}
