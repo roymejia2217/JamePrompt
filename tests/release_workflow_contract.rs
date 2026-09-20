@@ -106,3 +106,21 @@ fn windows_release_job_smokes_release_binary_before_packaging() {
         "Windows release smoke must execute the release-profile binary"
     );
 }
+
+
+#[test]
+fn prerelease_notes_describe_current_multiplatform_validation_scope() {
+    let workflow = read_release_workflow();
+
+    assert!(
+        !workflow.contains("Wayland support release candidate."),
+        "Prerelease notes must not describe every future prerelease as Wayland-only"
+    );
+    for required in ["Linux Wayland", "Linux X11", "Windows", "prerelease"] {
+        assert!(
+            workflow.contains(required),
+            "Prerelease notes must include current validation scope: {}",
+            required
+        );
+    }
+}
