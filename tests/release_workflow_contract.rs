@@ -44,3 +44,66 @@ fn rpm_release_job_installs_dbus_daemon_for_portal_contract_tests() {
         "rpm release job must install dbus-daemon because dbus-run-session is required by the portal contract tests"
     );
 }
+
+
+#[test]
+fn appimage_release_job_provisions_and_smokes_x11_runtime() {
+    let workflow = read_release_workflow();
+    let appimage_job = workflow
+        .split("\n  appimage:\n")
+        .nth(1)
+        .expect("release workflow must define an appimage job")
+        .split("\n  windows:\n")
+        .next()
+        .expect("appimage job must precede the windows job");
+
+    for required in [
+        "libxkbcommon-x11-0",
+        "xvfb",
+        "xauth",
+        "xdotool",
+        "zenity",
+        "Run AppImage X11 native hotkey auto-paste smoke",
+        "APPIMAGE_EXTRACT_AND_RUN: \"1\"",
+        "scripts/smoke/native-hotkey-x11.sh",
+    ] {
+        assert!(
+            appimage_job.contains(required),
+            "appimage release job must include required runtime contract: {}",
+            required
+        );
+    }
+}
+
+#[test]
+fn windows_release_job_smokes_release_binary_before_packaging() {
+    let workflow = read_release_workflow();
+    let windows_job = workflow
+        .split("\n  windows:\n")
+        .nth(1)
+        .expect("release workflow must define a windows job")
+        .split("\n  release:\n")
+        .next()
+        .expect("windows job must precede the release job");
+
+    let build = windows_job
+        .find("- name: Build Windows binaries")
+        .expect("windows release job must build release binaries");
+    let smoke = windows_job
+        .find("- name: Run Windows release native hotkey auto-paste smoke")
+        .expect("windows release job must smoke the release binary");
+    let portable = windows_job
+        .find("- name: Create portable archive")
+        .expect("windows release job must package the portable archive");
+
+    assert!(
+        build < smoke && smoke < portable,
+        "Windows release auto-paste smoke must run after build and before packaging"
+    );
+    assert!(
+        windows_job.contains(
+            "./scripts/smoke/native-hotkey-windows.ps1 -Binary ./target/$env:WINDOWS_TARGET/release/jame-prompt.exe"
+        ),
+        "Windows release smoke must execute the release-profile binary"
+    );
+}
