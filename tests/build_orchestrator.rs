@@ -142,9 +142,50 @@ touch "$output"
         );
     }
 
+    let xkbcommon_x11 = mock_dir.join("libxkbcommon-x11.so.0");
+    fs::write(&xkbcommon_x11, b"mock xkbcommon x11 runtime")
+        .expect("mock xkbcommon-x11 runtime");
+
+    write_executable(
+        &bin_dir.join("ldconfig"),
+        &mock_command(
+            log_path,
+            &format!(
+                r#"echo "libxkbcommon-x11.so.0 (libc6,x86-64) => {}""#,
+                xkbcommon_x11.display()
+            ),
+        ),
+    );
+
     write_executable(
         &bin_dir.join("linuxdeploy"),
-        &mock_command(log_path, r#"true"#),
+        &mock_command(
+            log_path,
+            r#"
+appdir=""
+library=""
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --appdir)
+      appdir="$2"
+      shift 2
+      ;;
+    --library)
+      library="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [[ -n "$library" ]]; then
+  mkdir -p "$appdir/usr/lib"
+  cp "$library" "$appdir/usr/lib/$(basename "$library")"
+fi
+"#,
+        ),
     );
 
     write_executable(
