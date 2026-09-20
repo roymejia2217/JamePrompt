@@ -156,6 +156,36 @@ jobs:
         shell: pwsh
         run: ./scripts/smoke/native-hotkey-windows.ps1 -Binary ./target/x86_64-pc-windows-msvc/release/jame-prompt.exe
 
+  test_arch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Build Arch package in pinned snapshot container
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            archlinux:base-devel-20260913.0.592969@sha256:70d777aaeb45befc04150df137c4d7c1b5042be442b4c904c38c6f6880bb7844 \
+            bash scripts/build_arch_package.sh
+
+      - name: Verify Arch package artifact
+        run: |
+          ARCH_PACKAGE="$(find packaging/arch -maxdepth 1 -type f -name '*.pkg.tar.zst' -print -quit)"
+          if [ -z "$ARCH_PACKAGE" ]; then
+            echo "Arch preflight did not produce a package artifact" >&2
+            exit 1
+          fi
+          test -s "$ARCH_PACKAGE"
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            archlinux:base-devel-20260913.0.592969@sha256:70d777aaeb45befc04150df137c4d7c1b5042be442b4c904c38c6f6880bb7844 \
+            bash scripts/validate_arch_package.sh "$ARCH_PACKAGE"
+
   test_rpm:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -189,15 +219,18 @@ jobs:
     needs:
       - test-linux
       - test-windows
+      - test_arch
       - test_rpm
 
     steps:
-      - name: Require Linux, Windows, and RPM test jobs
+      - name: Require Linux, Windows, Arch, and RPM test jobs
         env:
           LINUX_RESULT: ${{ needs.test-linux.result }}
           WINDOWS_RESULT: ${{ needs.test-windows.result }}
+          ARCH_RESULT: ${{ needs.test_arch.result }}
           RPM_RESULT: ${{ needs.test_rpm.result }}
         run: |
           test "$LINUX_RESULT" = "success"
           test "$WINDOWS_RESULT" = "success"
+          test "$ARCH_RESULT" = "success"
           test "$RPM_RESULT" = "success"
