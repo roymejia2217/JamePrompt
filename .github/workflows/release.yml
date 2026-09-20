@@ -160,33 +160,8 @@ jobs:
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
-            fedora:40 \
-            bash -lc '
-              set -euo pipefail
-              dnf -y update
-              dnf -y install git curl rpm-build cargo rust desktop-file-utils gtk3-devel libX11-devel libXtst-devel libxkbcommon-devel libxdo-devel \
-                dbus-daemon
-              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-              source /root/.cargo/env
-              rustup toolchain install stable
-              rustup default stable
-              RPM_VERSION="$(sed -n '\''s/^Version:[[:space:]]*//p'\'' packaging/rpm/jame-prompt.spec | head -n 1)"
-              if [ -z "$RPM_VERSION" ]; then
-                echo "Unable to read RPM version" >&2
-                exit 1
-              fi
-              RPM_TOPDIR="$PWD/target/rpmbuild"
-              mkdir -p "$RPM_TOPDIR"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
-              tar -czf "$RPM_TOPDIR/SOURCES/jame-prompt-${RPM_VERSION}.tar.gz" \
-                --exclude="./target" \
-                --exclude="./.git" \
-                --transform="s#^\./#jame-prompt-${RPM_VERSION}/#" \
-                -C "$PWD" .
-              rpmbuild \
-                --define "_topdir $RPM_TOPDIR" \
-                --define "_sourcedir $RPM_TOPDIR/SOURCES" \
-                -ba packaging/rpm/jame-prompt.spec
-            '
+            fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80 \
+            bash scripts/build_rpm_fedora.sh
 
       - name: Upload RPM package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

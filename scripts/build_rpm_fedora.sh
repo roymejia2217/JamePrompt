@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MINIMUM_RUST_VERSION="1.88.0"
+
+version_at_least() {
+    candidate="$1"
+    minimum="$2"
+    first="$(printf '%s\n%s\n' "$minimum" "$candidate" | sort -V | sed -n '1p')"
+    [[ "$first" == "$minimum" ]]
+}
+
+self_test() {
+    version_at_least "1.88.0" "1.88.0"
+    version_at_least "1.98.1" "1.88.0"
+
+    if version_at_least "1.87.0" "1.88.0"; then
+        echo "Version gate accepted an unsupported Rust version" >&2
+        exit 1
+    fi
+
+    echo "RPM builder version gate self-test passed"
+}
+
+if [[ "${1:-}" == "--self-test" ]]; then
+    self_test
+    exit 0
+fi
+
+dnf -y install \
+    git \
+    rpm-build \
+    cargo \
+    rust \
+    desktop-file-utils \
+    gtk3-devel \
+    libX11-devel \
+    libXtst-devel \
+    libxkbcommon-devel \
+    libxdo-devel \
+    dbus-daemon
+
+RUST_VERSION="$(rustc --version | awk '{print $2}')"
+CARGO_VERSION="$(cargo --version | awk '{print $2}')"
+
+if ! version_at_least "$RUST_VERSION" "$MINIMUM_RUST_VERSION"; then
+    echo "Rust toolchain is below the required minimum: found $RUST_VERSION, need >= $MINIMUM_RUST_VERSION" >&2
+    exit 1
+fi
+
+echo "Using rustc $RUST_VERSION and cargo $CARGO_VERSION from Fedora packages"
+
+RPM_VERSION="$(awk '/^Version:[[:space:]]*/ { print $2; exit }' packaging/rpm/jame-prompt.spec)"
+if [[ -z "$RPM_VERSION" ]]; then
+    echo "Unable to read RPM version" >&2
+    exit 1
+fi
+
+RPM_TOPDIR="$PWD/target/rpmbuild"
+mkdir -p "$RPM_TOPDIR"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+
+tar -czf "$RPM_TOPDIR/SOURCES/jame-prompt-${RPM_VERSION}.tar.gz" \
+    --exclude="./target" \
+    --exclude="./.git" \
+    --transform="s#^\./#jame-prompt-${RPM_VERSION}/#" \
+    -C "$PWD" .
+
+rpmbuild \
+    --define "_topdir $RPM_TOPDIR" \
+    --define "_sourcedir $RPM_TOPDIR/SOURCES" \
+    -ba packaging/rpm/jame-prompt.spec
