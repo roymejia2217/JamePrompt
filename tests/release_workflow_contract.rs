@@ -45,7 +45,6 @@ fn rpm_release_job_installs_dbus_daemon_for_portal_contract_tests() {
     );
 }
 
-
 #[test]
 fn appimage_release_job_provisions_and_smokes_x11_runtime() {
     let workflow = read_release_workflow();

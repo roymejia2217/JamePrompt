@@ -314,7 +314,6 @@ fn release_workflow_publishes_checksums_with_artifacts() {
     );
 }
 
-
 #[test]
 fn linux_native_packages_declare_xkbcommon_x11_runtime_dependency() {
     let deb = read_file("packaging/linux/build-deb.sh");
