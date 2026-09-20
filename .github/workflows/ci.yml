@@ -146,18 +146,46 @@ jobs:
         shell: pwsh
         run: ./scripts/smoke/native-hotkey-windows.ps1 -Binary ./target/x86_64-pc-windows-msvc/release/jame-prompt.exe
 
+  test_rpm:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Build RPM package in pinned Fedora container
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80 \
+            bash scripts/build_rpm_fedora.sh
+
+      - name: Verify RPM package artifact
+        run: |
+          RPM_PATH="$(find target/rpmbuild/RPMS -type f -name '*.rpm' -print -quit)"
+          if [ -z "$RPM_PATH" ]; then
+            echo "RPM preflight did not produce a package artifact" >&2
+            exit 1
+          fi
+          test -s "$RPM_PATH"
+          echo "Validated RPM package artifact: $RPM_PATH"
+
   test:
     if: always()
     runs-on: ubuntu-latest
     needs:
       - test-linux
       - test-windows
+      - test_rpm
 
     steps:
-      - name: Require Linux and Windows test jobs
+      - name: Require Linux, Windows, and RPM test jobs
         env:
           LINUX_RESULT: ${{ needs.test-linux.result }}
           WINDOWS_RESULT: ${{ needs.test-windows.result }}
+          RPM_RESULT: ${{ needs.test_rpm.result }}
         run: |
           test "$LINUX_RESULT" = "success"
           test "$WINDOWS_RESULT" = "success"
+          test "$RPM_RESULT" = "success"
