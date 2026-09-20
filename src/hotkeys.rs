@@ -106,9 +106,17 @@ pub fn validate_hotkey(hotkey_str: &str) -> bool {
     hotkey_str.parse::<HotKey>().is_ok()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PasteRequest {
+    Started,
+    ClipboardRequired(String),
+    Busy,
+    Unavailable,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PasteOutcome {
-    ClipboardTransferred,
+    Completed,
     Failed,
 }
 
@@ -164,26 +172,47 @@ impl HotkeyService {
     }
 }
 
-/// Injects Ctrl+V into the previously active application using the platform
-/// backend. Native platforms keep the existing rdev path. Wayland uses the
-/// permissioned XDG RemoteDesktop portal and never falls back to X11 injection.
-pub fn paste_to_active_window(content: String) -> bool {
-    perf::measure("hotkeys.paste_to_active_window_spawn", || {
-        #[cfg(target_os = "linux")]
-        if crate::platform::display_server() == crate::platform::DisplayServer::Wayland {
-            return remote_desktop::paste_to_active_window(content);
+/// Starts automatic paste using the backend selected for the active platform.
+pub fn request_paste(content: String) -> PasteRequest {
+    perf::measure(
+        "hotkeys.request_paste",
+        || match crate::platform::hotkey_backend_kind() {
+            HotkeyBackendKind::Native => PasteRequest::ClipboardRequired(content),
+            #[cfg(target_os = "linux")]
+            HotkeyBackendKind::Portal => {
+                if remote_desktop::paste_to_active_window(content) {
+                    PasteRequest::Started
+                } else {
+                    PasteRequest::Busy
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            HotkeyBackendKind::Portal => PasteRequest::Unavailable,
+            HotkeyBackendKind::Unavailable => PasteRequest::Unavailable,
+        },
+    )
+}
+
+/// Injects Ctrl+V after the UI runtime has written and verified the clipboard.
+pub fn paste_from_prepared_clipboard() -> bool {
+    perf::measure("hotkeys.paste_from_prepared_clipboard_spawn", || {
+        if crate::platform::hotkey_backend_kind() != HotkeyBackendKind::Native {
+            return false;
         }
-        let _ = content;
-        native::paste_to_active_window();
-        true
+        native::paste_to_active_window()
     })
 }
 
 pub fn poll_paste_outcome() -> Option<PasteOutcome> {
+    if let Some(outcome) = native::poll_paste_outcome() {
+        return Some(outcome);
+    }
+
     #[cfg(target_os = "linux")]
-    if crate::platform::display_server() == crate::platform::DisplayServer::Wayland {
+    if crate::platform::hotkey_backend_kind() == HotkeyBackendKind::Portal {
         return remote_desktop::poll_paste_outcome();
     }
+
     None
 }
 

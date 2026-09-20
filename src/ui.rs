@@ -174,6 +174,7 @@ pub enum Message {
     EditPressed(PromptId),
     FavoriteToggled(PromptId, bool),
     HotkeyTick,
+    NativeClipboardPrepared(Option<String>),
     // New prompt form
     FormNameChanged(String),
     FormContentEdited(iced::widget::text_editor::Action),
@@ -280,6 +281,7 @@ pub struct JamePromptApp {
     hotkey_service: Option<Arc<HotkeyService>>,
     hotkey_ids: HashMap<u32, PromptId>,
     pending_hotkey_name: Option<String>,
+    pending_native_paste_content: Option<String>,
     prompt_by_id: HashMap<PromptId, Prompt>,
     new_form: Option<NewPromptForm>,
     show_settings: bool,
@@ -374,6 +376,7 @@ impl Default for JamePromptApp {
             hotkey_service,
             hotkey_ids,
             pending_hotkey_name: None,
+            pending_native_paste_content: None,
             prompt_by_id,
             new_form: None,
             show_settings: false,
@@ -417,6 +420,7 @@ impl JamePromptApp {
             hotkey_service: None,
             hotkey_ids: HashMap::new(),
             pending_hotkey_name: None,
+            pending_native_paste_content: None,
             prompt_by_id,
             new_form: None,
             show_settings: false,
@@ -966,6 +970,10 @@ fn normalize_editor_text(text: &str) -> String {
     text.trim_end_matches('\n').to_string()
 }
 
+fn clipboard_matches_expected_prompt(expected: &str, actual: Option<&str>) -> bool {
+    actual == Some(expected)
+}
+
 fn should_exit_on_close_request(smoke_mode: bool) -> bool {
     smoke_mode
 }
@@ -1007,6 +1015,7 @@ impl JamePromptApp {
             hotkey_service: None,
             hotkey_ids: HashMap::new(),
             pending_hotkey_name: None,
+            pending_native_paste_content: None,
             prompt_by_id,
             new_form: None,
             show_settings: false,
@@ -1222,9 +1231,10 @@ impl JamePromptApp {
                 }
                 Message::HotkeyTick => {
                     if let Some(outcome) = crate::hotkeys::poll_paste_outcome() {
+                        self.pending_native_paste_content = None;
                         if self.pending_hotkey_name.take().is_some() {
                             match outcome {
-                                crate::hotkeys::PasteOutcome::ClipboardTransferred => {
+                                crate::hotkeys::PasteOutcome::Completed => {
                                     self.show_notification(NotificationEvent::PasteCompleted);
                                 }
                                 crate::hotkeys::PasteOutcome::Failed => {
@@ -1233,24 +1243,67 @@ impl JamePromptApp {
                             }
                         }
                     }
+
                     if let Some(hotkey_id) = HotkeyService::poll_event() {
+                        if self.pending_hotkey_name.is_some() {
+                            self.show_notification(NotificationEvent::PasteBusy);
+                            return Task::none();
+                        }
+
                         if let Some(prompt_id) = self.hotkey_ids.get(&hotkey_id) {
                             if let Some(p) = self.prompt_cloned_by_id(prompt_id) {
-                                let requested = crate::hotkeys::paste_to_active_window(p.content);
-                                if !requested {
-                                    self.show_notification(NotificationEvent::PasteBusy);
-                                } else if crate::hotkeys::is_paste_permission_denied() {
-                                    self.show_notification(
-                                        NotificationEvent::PastePermissionDenied,
-                                    );
-                                } else {
-                                    self.pending_hotkey_name = Some(p.name.clone());
-                                    self.show_notification(NotificationEvent::PasteRequested);
+                                match crate::hotkeys::request_paste(p.content) {
+                                    crate::hotkeys::PasteRequest::Started => {
+                                        if crate::hotkeys::is_paste_permission_denied() {
+                                            self.show_notification(
+                                                NotificationEvent::PastePermissionDenied,
+                                            );
+                                        } else {
+                                            self.pending_hotkey_name = Some(p.name);
+                                            self.show_notification(
+                                                NotificationEvent::PasteRequested,
+                                            );
+                                        }
+                                    }
+                                    crate::hotkeys::PasteRequest::ClipboardRequired(content) => {
+                                        self.pending_hotkey_name = Some(p.name);
+                                        self.pending_native_paste_content = Some(content.clone());
+                                        self.show_notification(NotificationEvent::PasteRequested);
+
+                                        return iced::clipboard::write(content).chain(
+                                            iced::clipboard::read()
+                                                .map(Message::NativeClipboardPrepared),
+                                        );
+                                    }
+                                    crate::hotkeys::PasteRequest::Busy => {
+                                        self.show_notification(NotificationEvent::PasteBusy);
+                                    }
+                                    crate::hotkeys::PasteRequest::Unavailable => {
+                                        self.show_notification(NotificationEvent::PasteFailed);
+                                    }
                                 }
                                 return Task::none();
                             }
                         }
                     }
+                }
+                Message::NativeClipboardPrepared(actual) => {
+                    let Some(expected) = self.pending_native_paste_content.take() else {
+                        return Task::none();
+                    };
+
+                    if !clipboard_matches_expected_prompt(&expected, actual.as_deref()) {
+                        self.pending_hotkey_name = None;
+                        self.show_notification(NotificationEvent::PasteFailed);
+                        return Task::none();
+                    }
+
+                    if !crate::hotkeys::paste_from_prepared_clipboard() {
+                        self.pending_hotkey_name = None;
+                        self.show_notification(NotificationEvent::PasteFailed);
+                    }
+
+                    return Task::none();
                 }
                 Message::FormNameChanged(name) => {
                     if !name.trim().is_empty() {
@@ -2719,6 +2772,18 @@ fn pick_list_style(theme: &Theme, status: pick_list::Status) -> pick_list::Style
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_clipboard_verification_requires_exact_prompt_content() {
+        let expected = "JamePrompt test ñ 😀\nsecond line";
+
+        assert!(clipboard_matches_expected_prompt(expected, Some(expected)));
+        assert!(!clipboard_matches_expected_prompt(
+            expected,
+            Some("OLD_VALUE")
+        ));
+        assert!(!clipboard_matches_expected_prompt(expected, None));
+    }
 
     #[test]
     fn prompt_editor_wraps_unbreakable_tokens_at_glyph_boundaries() {

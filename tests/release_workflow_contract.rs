@@ -4,6 +4,7 @@ fn read_release_workflow() -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/release.yml");
     std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("Expected {} to be readable: {error}", path.display()))
+        .replace("\r\n", "\n")
 }
 
 #[test]

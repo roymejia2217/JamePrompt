@@ -300,7 +300,7 @@ fn remote_desktop_worker(rx: mpsc::Receiver<WorkerCommand>) {
                     take_expired_offer(&mut offer.borrow_mut(), &expired_session, generation)
                 {
                     finish_paste_with(if expired_offer.transferred {
-                        PasteOutcome::ClipboardTransferred
+                        PasteOutcome::Completed
                     } else {
                         PasteOutcome::Failed
                     });
@@ -1245,11 +1245,8 @@ mod tests {
         finish_paste_with(PasteOutcome::Failed);
         assert!(poll_paste_outcome().is_none());
         PASTE_PENDING.store(true, Ordering::Release);
-        finish_paste_with(PasteOutcome::ClipboardTransferred);
-        assert_eq!(
-            poll_paste_outcome(),
-            Some(PasteOutcome::ClipboardTransferred)
-        );
+        finish_paste_with(PasteOutcome::Completed);
+        assert_eq!(poll_paste_outcome(), Some(PasteOutcome::Completed));
     }
 
     #[test]
