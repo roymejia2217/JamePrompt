@@ -217,11 +217,16 @@ jobs:
             libx11-dev \
             libxtst-dev \
             libxkbcommon-dev \
+            libxkbcommon-x11-0 \
             libgtk-3-dev \
             libayatana-appindicator3-dev \
             libxdo-dev \
             python3-pil \
-            desktop-file-utils
+            desktop-file-utils \
+            xvfb \
+            xauth \
+            xdotool \
+            zenity
 
       - name: Download linuxdeploy
         env:
@@ -243,6 +248,17 @@ jobs:
 
       - name: Build AppImage
         run: packaging/appimage/build-appimage.sh
+
+      - name: Run AppImage X11 native hotkey auto-paste smoke
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          APPIMAGE="$(find dist -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          if [ -z "$APPIMAGE" ]; then
+            echo "No AppImage artifact found for X11 native hotkey smoke" >&2
+            exit 1
+          fi
+          xvfb-run -a -s "-screen 0 1280x800x24" bash scripts/smoke/native-hotkey-x11.sh "$APPIMAGE"
 
       - name: Upload AppImage
         uses: actions/upload-artifact@v7
@@ -336,6 +352,10 @@ jobs:
               }
             }
           }
+
+      - name: Run Windows release native hotkey auto-paste smoke
+        shell: pwsh
+        run: ./scripts/smoke/native-hotkey-windows.ps1 -Binary ./target/$env:WINDOWS_TARGET/release/jame-prompt.exe
 
       - name: Create portable archive
         shell: pwsh
