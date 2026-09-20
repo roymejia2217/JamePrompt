@@ -6,7 +6,7 @@ MINIMUM_RUST_VERSION="1.88.0"
 version_at_least() {
     candidate="$1"
     minimum="$2"
-    first="$(printf '%s\n%s\n' "$minimum" "$candidate" | sort -V | head -n 1)"
+    first="$(printf '%s\n%s\n' "$minimum" "$candidate" | sort -V | sed -n '1p')"
     [[ "$first" == "$minimum" ]]
 }
 
@@ -50,7 +50,7 @@ fi
 
 echo "Using rustc $RUST_VERSION and cargo $CARGO_VERSION from Fedora packages"
 
-RPM_VERSION="$(sed -n 's/^Version:[[:space:]]*//p' packaging/rpm/jame-prompt.spec | head -n 1)"
+RPM_VERSION="$(awk '/^Version:[[:space:]]*/ { print $2; exit }' packaging/rpm/jame-prompt.spec)"
 if [[ -z "$RPM_VERSION" ]]; then
     echo "Unable to read RPM version" >&2
     exit 1
