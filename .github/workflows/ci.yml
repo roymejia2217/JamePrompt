@@ -52,11 +52,18 @@ jobs:
             libayatana-appindicator3-dev \
             libxdo-dev \
             python3-pil \
+            python3-yaml \
             desktop-file-utils \
             xvfb \
             xauth \
             xdotool \
             zenity
+
+      - name: Validate workflow YAML validator
+        run: python3 scripts/validate_workflow_yaml.py --self-test
+
+      - name: Validate GitHub workflow YAML syntax
+        run: python3 scripts/validate_workflow_yaml.py .github/workflows
 
       - name: Validate release version contract
         run: python3 scripts/prepare_release_version.py --self-test
