@@ -493,22 +493,10 @@ jobs:
           NOTES="Automated release for $TAG_NAME"
           if [[ "$TAG_NAME" == *-* ]]; then
             PRERELEASE_ARGS+=(--prerelease)
-            NOTES=
-          fi
-
-          if gh release view "$TAG_NAME" --repo "${{ github.repository }}" > /dev/null 2>&1; then
-            gh release upload "$TAG_NAME" "${RELEASE_FILES[@]}" \
-              --repo "${{ github.repository }}" \
-              --clobber
-          else
-            gh release create "$TAG_NAME" "${RELEASE_FILES[@]}" \
-              --repo "${{ github.repository }}" \
-              --target "$GITHUB_SHA" \
-              --title "$TAG_NAME" \
-              --notes "$NOTES" \
-              "${PRERELEASE_ARGS[@]}"
-          fi
-JamePrompt prerelease validation build.\n\nValidated platform paths include Linux Wayland portal hotkeys and permissioned auto-paste, Linux X11 native hotkeys and auto-paste, and Windows native hotkeys and auto-paste.\n\nThis prerelease is intended for validation before promotion to a stable release.'
+            printf -v NOTES '%s\n\n%s\n\n%s' \
+              'JamePrompt prerelease validation build.' \
+              'Validated platform paths include Linux Wayland portal hotkeys and permissioned auto-paste, Linux X11 native hotkeys and auto-paste, and Windows native hotkeys and auto-paste.' \
+              'This prerelease is intended for validation before promotion to a stable release.'
           fi
 
           if gh release view "$TAG_NAME" --repo "${{ github.repository }}" > /dev/null 2>&1; then
