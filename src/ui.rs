@@ -1300,6 +1300,8 @@ impl JamePromptApp {
                         self.pending_hotkey_name = None;
                         self.show_notification(NotificationEvent::PasteFailed);
                     }
+
+                    Task::none()
                 }
                 Message::FormNameChanged(name) => {
                     if !name.trim().is_empty() {
