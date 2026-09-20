@@ -86,6 +86,9 @@ jobs:
       - name: Validate RPM builder version gate
         run: bash scripts/build_rpm_fedora.sh --self-test
 
+      - name: Validate Arch snapshot builder contract
+        run: bash scripts/build_arch_package.sh --self-test
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 

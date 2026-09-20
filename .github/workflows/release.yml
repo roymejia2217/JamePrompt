@@ -92,47 +92,13 @@ jobs:
       - name: Prepare release version
         run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --apply
 
-      - name: Build Arch package in Arch Linux container
+      - name: Build Arch package in pinned snapshot container
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
-            archlinux:base-devel \
-            bash -lc '
-              set -euo pipefail
-              pacman-key --init
-              pacman-key --populate archlinux
-              pacman -Sy --noconfirm --needed \
-                archlinux-keyring \
-                git \
-                rust \
-                cargo \
-                desktop-file-utils \
-                gtk3 \
-                libappindicator-gtk3 \
-                libx11 \
-                libxtst \
-                libxkbcommon \
-                xdotool \
-                fontconfig \
-                freetype2 \
-                gdk-pixbuf2 \
-                hicolor-icon-theme \
-                pkgconf \
-                sqlite
-              useradd -m builder
-              mkdir -p /tmp/arch-build
-              tar \
-                --exclude=./.git \
-                --exclude=./target \
-                --exclude=./packaging/arch/pkg \
-                --exclude=./packaging/arch/src \
-                --exclude=./packaging/arch/target \
-                -cf - -C /workspace . | tar -xf - -C /tmp/arch-build
-              chown -R builder:builder /tmp/arch-build
-              su builder -c "cd /tmp/arch-build/packaging/arch && LIBSQLITE3_SYS_USE_PKG_CONFIG=1 makepkg --nodeps --noconfirm --cleanbuild --clean"
-              cp /tmp/arch-build/packaging/arch/*.pkg.tar.zst /workspace/packaging/arch/
-            '
+            archlinux:base-devel-20260913.0.592969@sha256:70d777aaeb45befc04150df137c4d7c1b5042be442b4c904c38c6f6880bb7844 \
+            bash scripts/build_arch_package.sh
 
       - name: Upload Arch package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
