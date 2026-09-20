@@ -69,11 +69,7 @@ fn ci_and_release_share_artifact_verification_helpers() {
         "scripts/install_appimage_tools.sh",
         "scripts/validate_windows_runtime.ps1",
     ] {
-        assert!(
-            ci.contains(helper),
-            "CI must use shared helper: {}",
-            helper
-        );
+        assert!(ci.contains(helper), "CI must use shared helper: {}", helper);
         assert!(
             release.contains(helper),
             "release workflow must use shared helper: {}",
