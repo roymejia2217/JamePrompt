@@ -146,7 +146,7 @@ jobs:
         shell: pwsh
         run: ./scripts/smoke/native-hotkey-windows.ps1 -Binary ./target/x86_64-pc-windows-msvc/release/jame-prompt.exe
 
-  test-rpm:
+  test_rpm:
     runs-on: ubuntu-latest
 
     steps:
@@ -177,14 +177,14 @@ jobs:
     needs:
       - test-linux
       - test-windows
-      - test-rpm
+      - test_rpm
 
     steps:
       - name: Require Linux, Windows, and RPM test jobs
         env:
           LINUX_RESULT: ${{ needs.test-linux.result }}
           WINDOWS_RESULT: ${{ needs.test-windows.result }}
-          RPM_RESULT: ${{ needs.test-rpm.result }}
+          RPM_RESULT: ${{ needs.test_rpm.result }}
         run: |
           test "$LINUX_RESULT" = "success"
           test "$WINDOWS_RESULT" = "success"

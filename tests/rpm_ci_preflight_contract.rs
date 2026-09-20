@@ -16,12 +16,12 @@ fn protected_ci_builds_real_rpm_in_pinned_fedora_container() {
     let ci = read_file(".github/workflows/ci.yml");
 
     let rpm_job = ci
-        .split("\n  test-rpm:\n")
+        .split("\n  test_rpm:\n")
         .nth(1)
-        .expect("protected CI must define a test-rpm job")
+        .expect("protected CI must define a test_rpm job")
         .split("\n  test:\n")
         .next()
-        .expect("test-rpm job must precede the aggregate test job");
+        .expect("test_rpm job must precede the aggregate test job");
 
     for required in [
         "runs-on: ubuntu-latest",
@@ -61,8 +61,8 @@ fn aggregate_test_requires_rpm_preflight() {
         "needs:",
         "- test-linux",
         "- test-windows",
-        "- test-rpm",
-        "RPM_RESULT: ${{ needs.test-rpm.result }}",
+        "- test_rpm",
+        "RPM_RESULT: ${{ needs.test_rpm.result }}",
         "test \"$RPM_RESULT\" = \"success\"",
     ] {
         assert!(
