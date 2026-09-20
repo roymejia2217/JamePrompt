@@ -16,7 +16,7 @@ fn release_job_checks_out_repository_before_using_release_tooling() {
         .expect("release workflow must define a release job");
 
     let checkout = release_job
-        .find("- name: Checkout release tooling\n        uses: actions/checkout@v6")
+        .find("- name: Checkout release tooling\n        uses: actions/checkout@")
         .expect("release job must checkout repository tooling");
     let staging = release_job
         .find("python3 scripts/stage_release_assets.py")

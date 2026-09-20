@@ -79,6 +79,23 @@ Create a beta or stable release tag only after the pull request has merged:
 scripts/create_release_tag.sh v1.2.0-beta.10
 ```
 
+## Workflow supply-chain updates
+
+External GitHub Actions in `.github/workflows` must use a full 40-character
+commit SHA. Keep the human-readable release or channel as an inline comment
+(for example, `# v6`), but never replace the immutable SHA with a moving tag
+or branch. Before changing a pin, resolve the intended upstream tag or branch
+in the action's canonical repository and verify that the selected commit
+belongs to that repository.
+
+Release helper binaries follow the same fail-closed rule. `linuxdeploy` and
+`appimagetool` are downloaded from exact GitHub release asset IDs and their
+bytes must match the checked-in SHA-256 values before they are made executable.
+When updating either helper, record the new canonical asset ID and the digest
+reported for that exact asset, update both values together, and let the
+supply-chain regression tests reject any return to latest/continuous
+name-based resolution without integrity verification.
+
 Push-to-PR creation is deliberately not automated in this repository yet. A
 workflow that creates a PR and triggers its checks needs a GitHub App
 installation token (or a user-managed PAT); `GITHUB_TOKEN`-created PRs do not
