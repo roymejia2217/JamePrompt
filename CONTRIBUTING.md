@@ -79,6 +79,12 @@ Create a beta or stable release tag only after the pull request has merged:
 scripts/create_release_tag.sh v1.2.0-beta.10
 ```
 
+CI treats a newer commit on the same pull request as authoritative and cancels
+the older in-progress CI run for that pull request. Post-merge pushes to
+`main` are not grouped for cancellation; each receives its own validation
+run. Protected CI jobs also use explicit timeouts so a stalled runner fails
+closed instead of consuming the default six-hour GitHub Actions job window.
+
 ## Workflow supply-chain updates
 
 External GitHub Actions in `.github/workflows` must use a full 40-character
