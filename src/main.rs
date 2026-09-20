@@ -29,8 +29,7 @@ include!(concat!(env!("OUT_DIR"), "/image.rs"));
 
 use iced::{window, Element, Task, Theme};
 use launch::{
-    should_run_native_hotkey_smoke_from_args, should_run_ui_smoke_from_args,
-    should_start_minimized,
+    should_run_native_hotkey_smoke_from_args, should_run_ui_smoke_from_args, should_start_minimized,
 };
 use perf::measure;
 use ui::{JamePromptApp, Message};

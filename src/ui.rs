@@ -1047,8 +1047,8 @@ impl JamePromptApp {
             "native hotkey smoke requires the native X11 or Windows backend"
         );
 
-        let db =
-            Database::in_memory().expect("In-memory native hotkey smoke database initialization failed");
+        let db = Database::in_memory()
+            .expect("In-memory native hotkey smoke database initialization failed");
         let prompt = Prompt {
             id: NATIVE_HOTKEY_SMOKE_ID.to_string(),
             name: NATIVE_HOTKEY_SMOKE_NAME.to_string(),
@@ -1063,9 +1063,8 @@ impl JamePromptApp {
         };
         let all_prompts = vec![prompt.clone()];
         let prompt_by_id = Self::build_prompt_index(&all_prompts);
-        let hotkey_service = Arc::new(
-            HotkeyService::new().expect("native hotkey smoke backend should initialize"),
-        );
+        let hotkey_service =
+            Arc::new(HotkeyService::new().expect("native hotkey smoke backend should initialize"));
         let hotkey_id = hotkey_service
             .register(&prompt.id, &prompt.name, NATIVE_HOTKEY_SMOKE_HOTKEY)
             .expect("native hotkey smoke shortcut should register");
