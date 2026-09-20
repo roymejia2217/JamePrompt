@@ -29,7 +29,7 @@ fn release_job_checks_out_repository_before_using_release_tooling() {
 }
 
 #[test]
-fn rpm_release_job_installs_dbus_daemon_for_portal_contract_tests() {
+fn rpm_release_job_uses_builder_with_dbus_daemon_for_portal_contract_tests() {
     let workflow = read_release_workflow();
     let rpm_job = workflow
         .split("\n  rpm:\n")
@@ -38,10 +38,19 @@ fn rpm_release_job_installs_dbus_daemon_for_portal_contract_tests() {
         .split("\n  appimage:\n")
         .next()
         .expect("rpm job must precede the appimage job");
+    let builder_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/build_rpm_fedora.sh");
+    let builder = std::fs::read_to_string(&builder_path).unwrap_or_else(|error| {
+        panic!("Expected {} to be readable: {error}", builder_path.display())
+    });
 
     assert!(
-        rpm_job.contains("dbus-daemon"),
-        "rpm release job must install dbus-daemon because dbus-run-session is required by the portal contract tests"
+        rpm_job.contains("bash scripts/build_rpm_fedora.sh"),
+        "rpm release job must execute the tracked Fedora builder"
+    );
+    assert!(
+        builder.contains("dbus-daemon"),
+        "rpm builder must install dbus-daemon because dbus-run-session is required by the portal contract tests"
     );
 }
 
