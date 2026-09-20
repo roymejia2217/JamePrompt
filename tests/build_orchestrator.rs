@@ -143,8 +143,7 @@ touch "$output"
     }
 
     let xkbcommon_x11 = mock_dir.join("libxkbcommon-x11.so.0");
-    fs::write(&xkbcommon_x11, b"mock xkbcommon x11 runtime")
-        .expect("mock xkbcommon-x11 runtime");
+    fs::write(&xkbcommon_x11, b"mock xkbcommon x11 runtime").expect("mock xkbcommon-x11 runtime");
 
     write_executable(
         &bin_dir.join("ldconfig"),
