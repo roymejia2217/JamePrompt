@@ -38,7 +38,7 @@ fn arch_builder_uses_single_dated_archive_without_live_mirror_fallback() {
 
     for required in [
         "ARCHIVE_DATE=\"2026/09/13\"",
-        "https://archive.archlinux.org/repos/${ARCHIVE_DATE}/\$repo/os/\$arch",
+        r"https://archive.archlinux.org/repos/${ARCHIVE_DATE}/\$repo/os/\$arch",
         "/etc/pacman.d/mirrorlist",
         "pacman-key --init",
         "pacman-key --populate archlinux",
