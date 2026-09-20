@@ -28,7 +28,10 @@ mod window_lifecycle;
 include!(concat!(env!("OUT_DIR"), "/image.rs"));
 
 use iced::{window, Element, Task, Theme};
-use launch::{should_run_ui_smoke_from_args, should_start_minimized};
+use launch::{
+    should_run_native_hotkey_smoke_from_args, should_run_ui_smoke_from_args,
+    should_start_minimized,
+};
 use perf::measure;
 use ui::{JamePromptApp, Message};
 use window_lifecycle::WindowLifecycleAction;
@@ -84,6 +87,9 @@ fn main() -> iced::Result {
     let ui_smoke = measure("startup.parse_ui_smoke", || {
         should_run_ui_smoke_from_args(std::env::args_os())
     });
+    let native_hotkey_smoke = measure("startup.parse_native_hotkey_smoke", || {
+        should_run_native_hotkey_smoke_from_args(std::env::args_os())
+    });
 
     let _ = measure("startup.tracing_init", || {
         tracing_subscriber::fmt::try_init()
@@ -100,8 +106,11 @@ fn main() -> iced::Result {
     iced::daemon(
         move || {
             measure("startup.app_state", || {
-                let (mut app, startup_task) =
-                    JamePromptApp::new_with_hidden_start(start_minimized, ui_smoke);
+                let (mut app, startup_task) = if native_hotkey_smoke {
+                    JamePromptApp::new_native_hotkey_smoke(start_minimized)
+                } else {
+                    JamePromptApp::new_with_hidden_start(start_minimized, ui_smoke)
+                };
                 let window_task = initial_window_task(&mut app, start_minimized);
                 (app, Task::batch([startup_task, window_task]))
             })
