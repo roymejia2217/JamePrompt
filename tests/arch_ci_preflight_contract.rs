@@ -30,7 +30,9 @@ fn protected_ci_builds_and_validates_real_arch_package() {
         "bash scripts/build_arch_package.sh",
         "Verify Arch package artifact",
         "scripts/validate_arch_package.sh",
-        "packaging/arch/*.pkg.tar.zst",
+        "find packaging/arch -maxdepth 1 -type f",
+        "-name '*.pkg.tar.zst'",
+        "test -s \"$ARCH_PACKAGE\"",
     ] {
         assert!(
             arch_job.contains(required),
