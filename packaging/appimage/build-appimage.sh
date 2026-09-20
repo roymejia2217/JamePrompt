@@ -36,7 +36,7 @@ require_command appimagetool
 require_file "assets/icons/app_icon.png"
 require_file "packaging/linux/${APP_ID}.desktop"
 
-XKBCOMMON_X11_LIB="$(ldconfig -p | awk '$1 == "libxkbcommon-x11.so.0" { print $NF; exit }')"
+XKBCOMMON_X11_LIB="$(ldconfig -p | awk '$1 == "libxkbcommon-x11.so.0" && !found { found = $NF } END { if (found) print found }')"
 if [ -z "$XKBCOMMON_X11_LIB" ]; then
     echo "Unable to locate libxkbcommon-x11.so.0 for AppImage bundling" >&2
     exit 1
