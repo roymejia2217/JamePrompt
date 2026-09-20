@@ -989,6 +989,11 @@ fn smoke_duration_from_env() -> Duration {
     Duration::from_millis(duration_ms)
 }
 
+const NATIVE_HOTKEY_SMOKE_ID: &str = "11111111-1111-4111-8111-111111111111";
+const NATIVE_HOTKEY_SMOKE_NAME: &str = "Native hotkey smoke";
+const NATIVE_HOTKEY_SMOKE_CONTENT: &str = "JamePrompt native smoke ñ 123";
+const NATIVE_HOTKEY_SMOKE_HOTKEY: &str = "Ctrl+Shift+P";
+
 impl JamePromptApp {
     #[cfg(test)]
     pub fn new() -> (Self, Task<Message>) {
@@ -1035,13 +1040,74 @@ impl JamePromptApp {
         }
     }
 
-    pub fn new_with_hidden_start(start_minimized: bool, smoke_mode: bool) -> (Self, Task<Message>) {
-        let mut app = if smoke_mode {
-            Self::new_smoke_mode()
-        } else {
-            Self::default()
+    fn new_native_hotkey_smoke_mode() -> Self {
+        assert_eq!(
+            crate::platform::hotkey_backend_kind(),
+            crate::platform::HotkeyBackendKind::Native,
+            "native hotkey smoke requires the native X11 or Windows backend"
+        );
+
+        let db = Database::in_memory()
+            .expect("In-memory native hotkey smoke database initialization failed");
+        let prompt = Prompt {
+            id: NATIVE_HOTKEY_SMOKE_ID.to_string(),
+            name: NATIVE_HOTKEY_SMOKE_NAME.to_string(),
+            content: NATIVE_HOTKEY_SMOKE_CONTENT.to_string(),
+            hotkey: Some(NATIVE_HOTKEY_SMOKE_HOTKEY.to_string()),
+            hotkey_enabled: true,
+            favorite: false,
+            created_at: String::new(),
+            updated_at: String::new(),
+            last_used_at: None,
+            use_count: 0,
         };
-        let smoke_exit_task = if smoke_mode {
+        let all_prompts = vec![prompt.clone()];
+        let prompt_by_id = Self::build_prompt_index(&all_prompts);
+        let hotkey_service =
+            Arc::new(HotkeyService::new().expect("native hotkey smoke backend should initialize"));
+        let hotkey_id = hotkey_service
+            .register(&prompt.id, &prompt.name, NATIVE_HOTKEY_SMOKE_HOTKEY)
+            .expect("native hotkey smoke shortcut should register");
+        let mut hotkey_ids = HashMap::new();
+        hotkey_ids.insert(hotkey_id, prompt.id.clone());
+
+        Self {
+            db,
+            all_prompts: all_prompts.clone(),
+            prompts: all_prompts,
+            search_term: String::new(),
+            prompt_filter: PromptFilter::All,
+            prompt_sort: PromptSort::NameAsc,
+            selected_id: Some(prompt.id),
+            status_message: "Native hotkey smoke ready".into(),
+            notifications: NotificationStore::new(),
+            form_errors: Vec::new(),
+            settings: Settings::default(),
+            hotkey_service: Some(hotkey_service),
+            hotkey_ids,
+            pending_hotkey_name: None,
+            pending_native_paste_content: None,
+            prompt_by_id,
+            new_form: None,
+            show_settings: false,
+            show_info: false,
+            pending_delete_id: None,
+            pending_import_backup: None,
+            pending_import_preview: None,
+            pending_import_mode: ImportMode::Merge,
+            pending_duplicate_mode: DuplicateMode::Skip,
+            listening_for_hotkey: false,
+            main_window_id: None,
+            window_open_pending: false,
+            content_width: WINDOW_INITIAL_WIDTH,
+            smoke_mode: true,
+            smoke_deadline: None,
+            tray: None,
+        }
+    }
+
+    fn with_startup_tasks(mut app: Self, start_minimized: bool) -> (Self, Task<Message>) {
+        let smoke_exit_task = if app.smoke_mode {
             let smoke_duration = smoke_duration_from_env();
             Task::perform(
                 async move {
@@ -1052,7 +1118,7 @@ impl JamePromptApp {
         } else {
             Task::none()
         };
-        app.smoke_deadline = if smoke_mode {
+        app.smoke_deadline = if app.smoke_mode {
             Some(Instant::now() + smoke_duration_from_env())
         } else {
             None
@@ -1066,6 +1132,20 @@ impl JamePromptApp {
             };
 
         (app, Task::batch([fallback_task, smoke_exit_task]))
+    }
+
+    pub fn new_with_hidden_start(start_minimized: bool, smoke_mode: bool) -> (Self, Task<Message>) {
+        let app = if smoke_mode {
+            Self::new_smoke_mode()
+        } else {
+            Self::default()
+        };
+
+        Self::with_startup_tasks(app, start_minimized)
+    }
+
+    pub fn new_native_hotkey_smoke(start_minimized: bool) -> (Self, Task<Message>) {
+        Self::with_startup_tasks(Self::new_native_hotkey_smoke_mode(), start_minimized)
     }
 
     pub fn title(&self) -> String {

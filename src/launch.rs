@@ -3,6 +3,7 @@ use std::ffi::OsStr;
 pub(crate) const START_MINIMIZED_ARG: &str = "--start-minimized";
 pub(crate) const PERF_SMOKE_ARG: &str = "--perf-smoke";
 pub(crate) const UI_SMOKE_ARG: &str = "--ui-smoke";
+pub(crate) const NATIVE_HOTKEY_SMOKE_ARG: &str = "--native-hotkey-smoke";
 
 pub(crate) fn should_start_minimized() -> bool {
     should_start_minimized_from_args(std::env::args_os())
@@ -33,6 +34,15 @@ where
 {
     args.into_iter()
         .any(|arg| arg.as_ref() == OsStr::new(UI_SMOKE_ARG))
+}
+
+pub(crate) fn should_run_native_hotkey_smoke_from_args<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    args.into_iter()
+        .any(|arg| arg.as_ref() == OsStr::new(NATIVE_HOTKEY_SMOKE_ARG))
 }
 
 #[cfg(test)]
