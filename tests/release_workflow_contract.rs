@@ -38,10 +38,12 @@ fn rpm_release_job_uses_builder_with_dbus_daemon_for_portal_contract_tests() {
         .split("\n  appimage:\n")
         .next()
         .expect("rpm job must precede the appimage job");
-    let builder_path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/build_rpm_fedora.sh");
+    let builder_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/build_rpm_fedora.sh");
     let builder = std::fs::read_to_string(&builder_path).unwrap_or_else(|error| {
-        panic!("Expected {} to be readable: {error}", builder_path.display())
+        panic!(
+            "Expected {} to be readable: {error}",
+            builder_path.display()
+        )
     });
 
     assert!(
