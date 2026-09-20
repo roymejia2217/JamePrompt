@@ -51,7 +51,11 @@ jobs:
             libayatana-appindicator3-dev \
             libxdo-dev \
             python3-pil \
-            desktop-file-utils
+            desktop-file-utils \
+            xvfb \
+            xauth \
+            xdotool \
+            zenity
 
       - name: Validate release version contract
         run: python3 scripts/prepare_release_version.py --self-test
@@ -71,6 +75,12 @@ jobs:
       - name: Run Linux tests
         run: cargo test --locked --all-targets
 
+      - name: Build native hotkey smoke binary
+        run: cargo build --locked --bin jame-prompt
+
+      - name: Run X11 native hotkey auto-paste smoke
+        run: xvfb-run -a -s "-screen 0 1280x800x24" bash scripts/smoke/native-hotkey-x11.sh target/debug/jame-prompt
+
   test-windows:
     runs-on: windows-latest
 
@@ -80,6 +90,13 @@ jobs:
 
       - name: Run Windows tests
         run: cargo test --locked --all-targets
+
+      - name: Build native hotkey smoke binary
+        run: cargo build --locked --bin jame-prompt
+
+      - name: Run Windows native hotkey auto-paste smoke
+        shell: pwsh
+        run: ./scripts/smoke/native-hotkey-windows.ps1 -Binary ./target/debug/jame-prompt.exe
 
   test:
     if: always()
