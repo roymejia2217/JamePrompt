@@ -56,3 +56,16 @@ Do not announce Winget or Chocolatey availability until the package has been acc
 - Use immutable versioned release URLs.
 - Publish checksums for every release artifact.
 - Document known platform limits clearly, especially global hotkey and paste behavior on restricted desktop sessions.
+
+
+## Native Hotkey and Auto-Paste Integrity Boundary
+
+Windows input injection is subject to User Interface Privilege Isolation (UIPI).
+A normal JamePrompt process can inject keyboard input only into applications at
+an equal or lower integrity level. Automatic paste into an elevated application
+may therefore be blocked by Windows even when the hotkey itself is registered
+correctly.
+
+Run JamePrompt at the same integrity level as the target application when
+validating native auto-paste. JamePrompt must not auto-elevate itself solely to
+bypass this operating-system boundary.

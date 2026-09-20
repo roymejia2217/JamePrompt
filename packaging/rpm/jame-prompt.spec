@@ -28,6 +28,7 @@ Requires:       libxdo
 Requires:       libX11
 Requires:       libXtst
 Requires:       libxkbcommon
+Requires:       libxkbcommon-x11
 Requires:       fontconfig
 Requires:       freetype
 Requires:       gdk-pixbuf2

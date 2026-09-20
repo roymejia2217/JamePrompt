@@ -66,7 +66,7 @@ Priority: optional
 Architecture: ${ARCH}
 Maintainer: ${MAINTAINER}
 Installed-Size: ${installed_size}
-Depends: libc6, libgcc-s1, libgtk-3-0, libxdo3, libayatana-appindicator3-1 | libappindicator3-1, libx11-6, libxtst6, libxkbcommon0, libfontconfig1, libfreetype6, libglib2.0-0, libgdk-pixbuf-2.0-0, hicolor-icon-theme, desktop-file-utils, xdg-desktop-portal, xdg-desktop-portal-gnome
+Depends: libc6, libgcc-s1, libgtk-3-0, libxdo3, libayatana-appindicator3-1 | libappindicator3-1, libx11-6, libxtst6, libxkbcommon0, libxkbcommon-x11-0, libfontconfig1, libfreetype6, libglib2.0-0, libgdk-pixbuf-2.0-0, hicolor-icon-theme, desktop-file-utils, xdg-desktop-portal, xdg-desktop-portal-gnome
 Description: Lightweight local prompt manager
  JamePrompt is a lightweight local prompt manager with hotkeys,
  clipboard integration, and system tray support.
