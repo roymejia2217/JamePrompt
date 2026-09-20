@@ -88,19 +88,24 @@ fn all_external_github_actions_are_pinned_to_full_commit_shas() {
 #[test]
 fn appimage_release_tool_downloads_are_asset_pinned_and_checksum_verified() {
     let workflow = read_file(".github/workflows/release.yml");
+    let installer = read_file("scripts/install_appimage_tools.sh");
+
+    assert!(
+        workflow.contains("scripts/install_appimage_tools.sh"),
+        "release workflow must use the tracked verified AppImage tool installer"
+    );
 
     for required in [
-        "LINUXDEPLOY_ASSET_ID: \"538917371\"",
-        "LINUXDEPLOY_SHA256: \"36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62\"",
-        "APPIMAGETOOL_ASSET_ID: \"324406736\"",
-        "APPIMAGETOOL_SHA256: \"ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0\"",
-        "repos/linuxdeploy/linuxdeploy/releases/assets/$LINUXDEPLOY_ASSET_ID",
-        "repos/AppImage/appimagetool/releases/assets/$APPIMAGETOOL_ASSET_ID",
+        "LINUXDEPLOY_ASSET_ID=\"538917371\"",
+        "LINUXDEPLOY_SHA256=\"36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62\"",
+        "APPIMAGETOOL_ASSET_ID=\"324406736\"",
+        "APPIMAGETOOL_SHA256=\"ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0\"",
+        "repos/${repo}/releases/assets/${asset_id}",
         "sha256sum --check --strict",
     ] {
         assert!(
-            workflow.contains(required),
-            "release workflow must include pinned AppImage tool contract: {}",
+            installer.contains(required),
+            "verified AppImage tool installer must include immutable contract: {}",
             required
         );
     }

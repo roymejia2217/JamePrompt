@@ -89,6 +89,30 @@ jobs:
       - name: Run X11 native hotkey auto-paste smoke
         run: xvfb-run -a -s "-screen 0 1280x800x24" bash scripts/smoke/native-hotkey-x11.sh target/debug/jame-prompt
 
+      - name: Install verified AppImage tools
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TOOL_DIR="$RUNNER_TEMP/jameprompt-appimage-tools"
+          scripts/install_appimage_tools.sh "$TOOL_DIR"
+          echo "$TOOL_DIR" >> "$GITHUB_PATH"
+
+      - name: Build release AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: packaging/appimage/build-appimage.sh
+
+      - name: Run release AppImage X11 native hotkey auto-paste smoke
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          APPIMAGE="$(find dist -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          if [ -z "$APPIMAGE" ]; then
+            echo "No release AppImage found for protected CI smoke" >&2
+            exit 1
+          fi
+          xvfb-run -a -s "-screen 0 1280x800x24" bash scripts/smoke/native-hotkey-x11.sh "$APPIMAGE"
+
   test-windows:
     runs-on: windows-latest
 
@@ -105,6 +129,19 @@ jobs:
       - name: Run Windows native hotkey auto-paste smoke
         shell: pwsh
         run: ./scripts/smoke/native-hotkey-windows.ps1 -Binary ./target/debug/jame-prompt.exe
+
+      - name: Build Windows release native hotkey binary
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc --bin jame-prompt
+
+      - name: Validate Windows release runtime dependencies
+        shell: pwsh
+        run: ./scripts/validate_windows_runtime.ps1 -BinaryDirectory ./target/x86_64-pc-windows-msvc/release
+
+      - name: Run Windows release native hotkey auto-paste smoke
+        shell: pwsh
+        run: ./scripts/smoke/native-hotkey-windows.ps1 -Binary ./target/x86_64-pc-windows-msvc/release/jame-prompt.exe
 
   test:
     if: always()

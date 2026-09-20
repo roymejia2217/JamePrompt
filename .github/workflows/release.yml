@@ -199,12 +199,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: release-gate
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_run_id == '' }}
-    env:
-      LINUXDEPLOY_ASSET_ID: "538917371"
-      LINUXDEPLOY_SHA256: "36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62"
-      APPIMAGETOOL_ASSET_ID: "324406736"
-      APPIMAGETOOL_SHA256: "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
-
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -233,29 +227,17 @@ jobs:
             xdotool \
             zenity
 
-      - name: Download verified linuxdeploy
+      - name: Install verified AppImage tools
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api --method GET \
-            -H "Accept: application/octet-stream" \
-            "repos/linuxdeploy/linuxdeploy/releases/assets/$LINUXDEPLOY_ASSET_ID" > linuxdeploy
-          printf '%s  %s\n' "$LINUXDEPLOY_SHA256" linuxdeploy | sha256sum --check --strict
-          chmod +x linuxdeploy
-          sudo mv linuxdeploy /usr/local/bin/linuxdeploy
-
-      - name: Download verified appimagetool
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api --method GET \
-            -H "Accept: application/octet-stream" \
-            "repos/AppImage/appimagetool/releases/assets/$APPIMAGETOOL_ASSET_ID" > appimagetool
-          printf '%s  %s\n' "$APPIMAGETOOL_SHA256" appimagetool | sha256sum --check --strict
-          chmod +x appimagetool
-          sudo mv appimagetool /usr/local/bin/appimagetool
+          TOOL_DIR="$RUNNER_TEMP/jameprompt-appimage-tools"
+          scripts/install_appimage_tools.sh "$TOOL_DIR"
+          echo "$TOOL_DIR" >> "$GITHUB_PATH"
 
       - name: Build AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
         run: packaging/appimage/build-appimage.sh
 
       - name: Run AppImage X11 native hotkey auto-paste smoke
@@ -283,7 +265,6 @@ jobs:
     env:
       WINDOWS_TARGET: x86_64-pc-windows-msvc
       WINDOWS_PORTABLE_DIR: target/windows-portable
-      FORBIDDEN_RUNTIME_DLLS: VCRUNTIME140.dll,VCRUNTIME140_1.dll,MSVCP140.dll,MSVCP140_1.dll
       RUSTFLAGS: -C target-feature=+crt-static
 
     steps:
@@ -318,49 +299,7 @@ jobs:
 
       - name: Validate Windows runtime dependencies
         shell: pwsh
-        run: |
-          $dumpbinCommand = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
-          $dumpbinPath = if ($dumpbinCommand) { $dumpbinCommand.Source } else { $null }
-          if (-not $dumpbinPath) {
-            $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-            if (Test-Path $vswhere) {
-              $installationPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-              if ($installationPath) {
-                $dumpbinPath = Get-ChildItem -Path (Join-Path $installationPath "VC\Tools\MSVC") -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
-                  Where-Object { $_.FullName -match '\\Hostx64\\x64\\dumpbin.exe$' } |
-                  Sort-Object FullName -Descending |
-                  Select-Object -First 1 -ExpandProperty FullName
-              }
-            }
-          }
-          if (-not $dumpbinPath) {
-            $searchRoots = @(
-              "${env:ProgramFiles}\Microsoft Visual Studio\2022",
-              "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022"
-            ) | Where-Object { Test-Path $_ }
-            $dumpbinPath = Get-ChildItem -Path $searchRoots -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
-              Where-Object { $_.FullName -match '\\Hostx64\\x64\\dumpbin.exe$' } |
-              Sort-Object FullName -Descending |
-              Select-Object -First 1 -ExpandProperty FullName
-          }
-          if (-not $dumpbinPath) {
-            throw "Unable to locate dumpbin.exe for Windows runtime dependency validation."
-          }
-
-          $forbiddenDlls = $env:FORBIDDEN_RUNTIME_DLLS.Split(",", [System.StringSplitOptions]::RemoveEmptyEntries)
-          $executables = Get-ChildItem "target/$env:WINDOWS_TARGET/release" -Filter "*.exe"
-          if (-not $executables) {
-            throw "No Windows executables were found for runtime dependency validation."
-          }
-
-          foreach ($executable in $executables) {
-            $imports = & $dumpbinPath /DEPENDENTS $executable.FullName
-            foreach ($dll in $forbiddenDlls) {
-              if ($imports -match [regex]::Escape($dll)) {
-                throw "$($executable.Name) imports $dll. Windows release artifacts must run on a clean Windows 10 LTSC x64 VM without requiring the Visual C++ Redistributable."
-              }
-            }
-          }
+        run: ./scripts/validate_windows_runtime.ps1 -BinaryDirectory ./target/$env:WINDOWS_TARGET/release
 
       - name: Run Windows release native hotkey auto-paste smoke
         shell: pwsh
