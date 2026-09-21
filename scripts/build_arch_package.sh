@@ -33,6 +33,17 @@ retry_with_backoff() {
     done
 }
 
+configure_snapshot() {
+    printf 'Server = %s\n' "$ARCHIVE_SERVER" > /etc/pacman.d/mirrorlist
+    pacman-key --init
+    pacman-key --populate archlinux
+}
+
+sync_snapshot_keyring() {
+    retry_with_backoff "$MAX_DOWNLOAD_ATTEMPTS" "$RETRY_DELAY_SECONDS" pacman -Syy --noconfirm --needed \
+        archlinux-keyring
+}
+
 self_test() {
     [[ "$ARCHIVE_DATE" =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]]
     [[ "$ARCHIVE_SERVER" == "https://archive.archlinux.org/repos/${ARCHIVE_DATE}/\$repo/os/\$arch" ]]
@@ -63,12 +74,17 @@ if [[ "${1:-}" == "--self-test" ]]; then
     exit 0
 fi
 
-printf 'Server = %s\n' "$ARCHIVE_SERVER" > /etc/pacman.d/mirrorlist
+if [[ "${1:-}" == "--configure-snapshot" ]]; then
+    configure_snapshot
+    sync_snapshot_keyring
+    echo "Arch snapshot configuration ready: $ARCHIVE_DATE"
+    exit 0
+fi
 
-pacman-key --init
-pacman-key --populate archlinux
-retry_with_backoff "$MAX_DOWNLOAD_ATTEMPTS" "$RETRY_DELAY_SECONDS" pacman -Syy --noconfirm --needed \
-    archlinux-keyring \
+configure_snapshot
+sync_snapshot_keyring
+
+retry_with_backoff "$MAX_DOWNLOAD_ATTEMPTS" "$RETRY_DELAY_SECONDS" pacman -S --noconfirm --needed \
     git \
     rust \
     cargo \
