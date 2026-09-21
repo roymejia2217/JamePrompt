@@ -77,7 +77,6 @@ fn protected_ci_self_tests_arch_snapshot_builder_contract() {
     );
 }
 
-
 #[test]
 fn arch_snapshot_downloads_use_bounded_retry_without_weakening_integrity() {
     let builder = read_file("scripts/build_arch_package.sh");
