@@ -76,3 +76,38 @@ fn protected_ci_self_tests_arch_snapshot_builder_contract() {
         "protected CI must exercise the Arch snapshot builder self-test"
     );
 }
+
+
+#[test]
+fn arch_snapshot_downloads_use_bounded_retry_without_weakening_integrity() {
+    let builder = read_file("scripts/build_arch_package.sh");
+
+    for required in [
+        "MAX_DOWNLOAD_ATTEMPTS=3",
+        "RETRY_DELAY_SECONDS=5",
+        "retry_with_backoff()",
+        "retry_with_backoff \"$MAX_DOWNLOAD_ATTEMPTS\" \"$RETRY_DELAY_SECONDS\" pacman -Syy",
+        "transient_failure_then_success",
+        "permanent_failure",
+        "retry self-test passed",
+    ] {
+        assert!(
+            builder.contains(required),
+            "Arch snapshot retry contract must include: {}",
+            required
+        );
+    }
+
+    for forbidden in [
+        "DisableDownloadTimeout",
+        "SigLevel = Never",
+        "SigLevel=Never",
+        "|| true",
+    ] {
+        assert!(
+            !builder.contains(forbidden),
+            "Arch retry must not weaken integrity or fail-open: {}",
+            forbidden
+        );
+    }
+}
