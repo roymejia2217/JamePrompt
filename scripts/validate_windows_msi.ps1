@@ -8,6 +8,7 @@ $ResolvedMsi = (Resolve-Path $MsiPath).Path
 $InstallDirectory = Join-Path $env:ProgramFiles "JamePrompt"
 $InstalledBinary = Join-Path $InstallDirectory "jame-prompt.exe"
 $MachineMarker = "HKLM:\SOFTWARE\JamePrompt"
+$UserShortcutMarker = "HKCU:\SOFTWARE\JamePrompt"
 $CommonShortcut = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\JamePrompt\JamePrompt.lnk"
 $UserShortcut = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\JamePrompt\JamePrompt.lnk"
 $TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("jameprompt-msi-" + [Guid]::NewGuid())
@@ -74,6 +75,10 @@ try {
         throw "MSI install did not create machine registry marker: $MachineMarker"
     }
 
+    if (-not (Test-Path $UserShortcutMarker)) {
+        throw "MSI install did not create user shortcut registry marker: $UserShortcutMarker"
+    }
+
     if (-not ((Test-Path $CommonShortcut) -or (Test-Path $UserShortcut))) {
         throw "MSI install did not create the expected Start Menu shortcut"
     }
@@ -101,6 +106,9 @@ finally {
     }
     if (Test-Path $MachineMarker) {
         throw "MSI uninstall left machine registry marker behind: $MachineMarker"
+    }
+    if (Test-Path $UserShortcutMarker) {
+        throw "MSI uninstall left user shortcut registry marker behind: $UserShortcutMarker"
     }
     if ((Test-Path $CommonShortcut) -or (Test-Path $UserShortcut)) {
         throw "MSI uninstall left Start Menu shortcut behind"
