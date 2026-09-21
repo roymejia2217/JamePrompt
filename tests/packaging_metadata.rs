@@ -33,8 +33,8 @@ fn release_workflow_includes_windows_artifacts_in_the_shared_release_pipeline() 
         &workflow,
         &[
             "runs-on: windows-latest",
-            "Install WiX Toolset",
-            "Install cargo-wix",
+            "Install pinned WiX Toolset",
+            "Install pinned cargo-wix",
             "Build Windows binaries",
             "RUSTFLAGS: -C target-feature=+crt-static",
             "Validate Windows runtime dependencies",
@@ -49,9 +49,10 @@ fn release_workflow_includes_windows_artifacts_in_the_shared_release_pipeline() 
             "Where-Object { $_.kind -contains \"bin\" }",
             "Copy-Item $source \"$portableRoot/$binaryName.exe\"",
             "scripts/install_appimage_tools.sh",
-            "cargo wix --no-build --target x86_64-pc-windows-msvc",
-            "--target-bin-dir \"target/$env:WINDOWS_TARGET/release\"",
-            "--nocapture",
+            "scripts/build_windows_msi.ps1",
+            "scripts/validate_windows_msi.ps1",
+            "wixtoolset --version 3.14.1.20250415",
+            "cargo install cargo-wix --version 0.3.9 --locked",
         ],
     );
     assert!(
@@ -142,6 +143,7 @@ fn wix_source_defines_production_windows_installer_contract() {
             "<RemoveFolder",
             "On=\"uninstall\"",
             "<RegistryValue",
+            "Root=\"HKLM\"",
             "Root=\"HKCU\"",
             "KeyPath=\"yes\"",
             "<ComponentRef Id=\"ApplicationShortcut\"",
@@ -151,6 +153,41 @@ fn wix_source_defines_production_windows_installer_contract() {
     assert!(
         !wix.contains("Id=\"ALLUSERS\""),
         "cargo-wix already defines ALLUSERS for per-machine packages; main.wxs must not duplicate it"
+    );
+
+    let application_files = wix
+        .split("<Component Id=\"ApplicationFiles\"")
+        .nth(1)
+        .expect("WiX must define ApplicationFiles")
+        .split("</Component>")
+        .next()
+        .expect("ApplicationFiles component must terminate");
+    let shortcut = wix
+        .split("<Component Id=\"ApplicationShortcut\"")
+        .nth(1)
+        .expect("WiX must define ApplicationShortcut")
+        .split("</Component>")
+        .next()
+        .expect("ApplicationShortcut component must terminate");
+
+    assert!(
+        application_files.contains("Root=\"HKLM\"")
+            && application_files.contains("Name=\"installed\""),
+        "per-machine installation marker must live with per-machine application files"
+    );
+    assert!(
+        !application_files.contains("Root=\"HKCU\""),
+        "ApplicationFiles must not contain per-user registry state"
+    );
+    assert!(
+        shortcut.contains("Root=\"HKCU\"")
+            && shortcut.contains("Name=\"installed\"")
+            && shortcut.contains("KeyPath=\"yes\""),
+        "Start Menu shortcut component must preserve its historical HKCU registry KeyPath"
+    );
+    assert!(
+        !shortcut.contains("Root=\"HKLM\""),
+        "shortcut component must not mix per-user shortcut data with HKLM state"
     );
 }
 

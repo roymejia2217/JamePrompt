@@ -156,6 +156,20 @@ jobs:
         shell: pwsh
         run: ./scripts/smoke/native-hotkey-windows.ps1 -Binary ./target/x86_64-pc-windows-msvc/release/jame-prompt.exe
 
+      - name: Install pinned WiX Toolset
+        run: choco install wixtoolset --version 3.14.1.20250415 --no-progress -y
+
+      - name: Install pinned cargo-wix
+        run: cargo install cargo-wix --version 0.3.9 --locked
+
+      - name: Build MSI
+        shell: pwsh
+        run: ./scripts/build_windows_msi.ps1 -Target x86_64-pc-windows-msvc -BinaryDirectory ./target/x86_64-pc-windows-msvc/release
+
+      - name: Validate MSI install and uninstall
+        shell: pwsh
+        run: ./scripts/validate_windows_msi.ps1 -MsiPath ./target/wix/JamePrompt-1.1.0-x64.msi
+
   test_deb:
     runs-on: ubuntu-latest
     timeout-minutes: 45
