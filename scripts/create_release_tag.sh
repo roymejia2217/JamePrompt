@@ -10,24 +10,31 @@ tag="$1"
 repository_root="$(git rev-parse --show-toplevel)"
 cd "$repository_root"
 
+assert_release_state_current() {
+  head_commit="$(git rev-parse HEAD)"
+  main_commit="$(git rev-parse origin/main)"
+  [ "$head_commit" = "$main_commit" ] || {
+    echo "release tags must be created from the current origin/main commit" >&2
+    exit 2
+  }
+
+  git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null && {
+    echo "release tag already exists: $tag" >&2
+    exit 2
+  }
+}
+
 git diff --quiet
 git diff --cached --quiet
 git fetch origin main --tags
-
-head_commit="$(git rev-parse HEAD)"
-main_commit="$(git rev-parse origin/main)"
-[ "$head_commit" = "$main_commit" ] || {
-  echo "release tags must be created from the current origin/main commit" >&2
-  exit 2
-}
-
-git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null && {
-  echo "release tag already exists: $tag" >&2
-  exit 2
-}
+assert_release_state_current
 
 python3 scripts/validate_main_ci_evidence.py --sha "$head_commit"
 scripts/verify_change_gate.sh
+
+git fetch origin main --tags
+assert_release_state_current
+
 python3 scripts/validate_release_gate.py \
   --tag "$tag" \
   --main-ref origin/main \
