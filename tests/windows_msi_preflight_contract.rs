@@ -93,7 +93,8 @@ fn msi_builder_reuses_release_binary_without_rebuilding_product() {
     let builder = read_file("scripts/build_windows_msi.ps1");
 
     for required in [
-        "cargo wix",
+        "& cargo @cargoArgs",
+        "\"wix\"",
         "--no-build",
         "--target",
         "--target-bin-dir",
