@@ -127,9 +127,12 @@ fn msi_validator_exercises_install_runtime_and_uninstall_lifecycle() {
         "scripts/smoke/native-hotkey-windows.ps1",
         "Microsoft\\Windows\\CurrentVersion\\Uninstall",
         "HKLM:\\SOFTWARE\\JamePrompt",
+        "HKCU:\\SOFTWARE\\JamePrompt",
         "Start Menu",
+        "MSI install did not create user shortcut registry marker",
         "MSI uninstall left installed binary behind",
         "MSI uninstall left machine registry marker behind",
+        "MSI uninstall left user shortcut registry marker behind",
     ] {
         assert!(
             validator.contains(required),
