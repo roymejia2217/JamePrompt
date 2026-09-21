@@ -156,6 +156,43 @@ jobs:
         shell: pwsh
         run: ./scripts/smoke/native-hotkey-windows.ps1 -Binary ./target/x86_64-pc-windows-msvc/release/jame-prompt.exe
 
+  test_deb:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Install Debian packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libx11-dev \
+            libxtst-dev \
+            libxkbcommon-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            libxdo-dev \
+            python3-pil \
+            dpkg-dev \
+            desktop-file-utils \
+            lintian
+
+      - name: Build Debian package
+        run: packaging/linux/build-deb.sh
+
+      - name: Verify Debian package artifact
+        run: |
+          DEB_PACKAGE="$(find target/debian -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          if [ -z "$DEB_PACKAGE" ]; then
+            echo "Debian preflight did not produce a package artifact" >&2
+            exit 1
+          fi
+          test -s "$DEB_PACKAGE"
+          scripts/validate_deb_package.sh "$DEB_PACKAGE"
+
   test_arch:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -219,18 +256,21 @@ jobs:
     needs:
       - test-linux
       - test-windows
+      - test_deb
       - test_arch
       - test_rpm
 
     steps:
-      - name: Require Linux, Windows, Arch, and RPM test jobs
+      - name: Require Linux, Windows, Debian, Arch, and RPM test jobs
         env:
           LINUX_RESULT: ${{ needs.test-linux.result }}
           WINDOWS_RESULT: ${{ needs.test-windows.result }}
+          DEB_RESULT: ${{ needs.test_deb.result }}
           ARCH_RESULT: ${{ needs.test_arch.result }}
           RPM_RESULT: ${{ needs.test_rpm.result }}
         run: |
           test "$LINUX_RESULT" = "success"
           test "$WINDOWS_RESULT" = "success"
+          test "$DEB_RESULT" = "success"
           test "$ARCH_RESULT" = "success"
           test "$RPM_RESULT" = "success"
