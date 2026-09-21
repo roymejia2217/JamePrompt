@@ -446,6 +446,16 @@ jobs:
             exit 1
           fi
 
+          EXPECTED_TARGET="$(git rev-parse "$TAG_NAME^{commit}")"
+          if ! REMOTE_TARGET="$(git ls-remote --exit-code origin "refs/tags/$TAG_NAME^{}" | awk 'NR == 1 { print $1 }')"; then
+            echo "Remote release tag target mismatch: expected $EXPECTED_TARGET, got missing" >&2
+            exit 1
+          fi
+          if [ "$REMOTE_TARGET" != "$EXPECTED_TARGET" ]; then
+            echo "Remote release tag target mismatch: expected $EXPECTED_TARGET, got $REMOTE_TARGET" >&2
+            exit 1
+          fi
+
           python3 scripts/stage_release_assets.py \
             --tag "$TAG_NAME" \
             release-artifacts \
@@ -482,7 +492,7 @@ jobs:
           else
             gh release create "$TAG_NAME" "${RELEASE_FILES[@]}" \
               --repo "${{ github.repository }}" \
-              --target "$GITHUB_SHA" \
+              --verify-tag \
               --title "$TAG_NAME" \
               --notes "$NOTES" \
               "${PRERELEASE_ARGS[@]}"
