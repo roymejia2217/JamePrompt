@@ -89,6 +89,9 @@ jobs:
       - name: Validate Arch snapshot builder contract
         run: bash scripts/build_arch_package.sh --self-test
 
+      - name: Validate main CI evidence validator
+        run: python3 scripts/validate_main_ci_evidence.py --self-test
+
       - name: Validate CI and Release parity validator
         run: python3 scripts/validate_ci_release_parity.py --self-test
 
