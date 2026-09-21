@@ -89,6 +89,12 @@ jobs:
       - name: Validate Arch snapshot builder contract
         run: bash scripts/build_arch_package.sh --self-test
 
+      - name: Validate CI and Release parity validator
+        run: python3 scripts/validate_ci_release_parity.py --self-test
+
+      - name: Validate CI and Release parity
+        run: python3 scripts/validate_ci_release_parity.py
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
