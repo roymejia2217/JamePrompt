@@ -50,6 +50,12 @@
               Checksum="yes" />
             <File Id="LicenseFile" Name="LICENSE" DiskId="1" Source="LICENSE" />
             <File Id="ReadmeFile" Name="README.md" DiskId="1" Source="README.md" />
+            <RegistryValue
+              Root="HKLM"
+              Key="Software\JamePrompt"
+              Name="installed"
+              Type="integer"
+              Value="1" />
           </Component>
         </Directory>
       </Directory>
@@ -70,9 +76,9 @@
           Icon="AppIcon.ico" />
         <RemoveFolder Id="ApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
         <RegistryValue
-          Root="HKLM"
+          Root="HKCU"
           Key="Software\JamePrompt"
-          Name="installed"
+          Name="shortcut"
           Type="integer"
           Value="1"
           KeyPath="yes" />
