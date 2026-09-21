@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MINIMUM_RUST_VERSION="1.88.0"
+read_project_rust_version() {
+    local manifest="${1:-Cargo.toml}"
+    local minimum
+    minimum="$(awk -F'"' '/^[[:space:]]*rust-version[[:space:]]*=/ { print $2; exit }' "$manifest")"
+    if [[ -z "$minimum" ]]; then
+        echo "Unable to read rust-version from $manifest" >&2
+        return 1
+    fi
+    printf '%s\n' "$minimum"
+}
 
 version_at_least() {
     candidate="$1"
@@ -10,11 +19,13 @@ version_at_least() {
     [[ "$first" == "$minimum" ]]
 }
 
-self_test() {
-    version_at_least "1.88.0" "1.88.0"
-    version_at_least "1.98.1" "1.88.0"
+MINIMUM_RUST_VERSION="$(read_project_rust_version Cargo.toml)"
 
-    if version_at_least "1.87.0" "1.88.0"; then
+self_test() {
+    version_at_least "$MINIMUM_RUST_VERSION" "$MINIMUM_RUST_VERSION"
+    version_at_least "999.0.0" "$MINIMUM_RUST_VERSION"
+
+    if version_at_least "0.0.0" "$MINIMUM_RUST_VERSION"; then
         echo "Version gate accepted an unsupported Rust version" >&2
         exit 1
     fi
