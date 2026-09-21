@@ -81,6 +81,20 @@ jobs:
           test -s "$DEB_PACKAGE"
           scripts/validate_deb_package.sh "$DEB_PACKAGE"
 
+      - name: Validate Debian install lifecycle
+        run: |
+          DEB_PACKAGE="$(find target/debian -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          if [ -z "$DEB_PACKAGE" ]; then
+            echo "Debian release lifecycle did not find a package artifact" >&2
+            exit 1
+          fi
+          docker run --rm \
+            --platform linux/amd64 \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            debian:trixie-20260713-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd \
+            bash scripts/validate_deb_install_lifecycle.sh "$DEB_PACKAGE"
+
       - name: Upload Debian package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
