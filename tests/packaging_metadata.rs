@@ -143,7 +143,7 @@ fn wix_source_defines_production_windows_installer_contract() {
             "<RemoveFolder",
             "On=\"uninstall\"",
             "<RegistryValue",
-            "Root=\"HKCU\"",
+            "Root=\"HKLM\"",
             "KeyPath=\"yes\"",
             "<ComponentRef Id=\"ApplicationShortcut\"",
             "<MajorUpgrade",
