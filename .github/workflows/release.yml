@@ -71,6 +71,16 @@ jobs:
       - name: Build Debian package
         run: packaging/linux/build-deb.sh
 
+      - name: Validate Debian package artifact
+        run: |
+          DEB_PACKAGE="$(find target/debian -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          if [ -z "$DEB_PACKAGE" ]; then
+            echo "Debian release build did not produce a package artifact" >&2
+            exit 1
+          fi
+          test -s "$DEB_PACKAGE"
+          scripts/validate_deb_package.sh "$DEB_PACKAGE"
+
       - name: Upload Debian package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
