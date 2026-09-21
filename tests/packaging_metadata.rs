@@ -144,6 +144,7 @@ fn wix_source_defines_production_windows_installer_contract() {
             "On=\"uninstall\"",
             "<RegistryValue",
             "Root=\"HKLM\"",
+            "Root=\"HKCU\"",
             "KeyPath=\"yes\"",
             "<ComponentRef Id=\"ApplicationShortcut\"",
             "<MajorUpgrade",
@@ -152,6 +153,41 @@ fn wix_source_defines_production_windows_installer_contract() {
     assert!(
         !wix.contains("Id=\"ALLUSERS\""),
         "cargo-wix already defines ALLUSERS for per-machine packages; main.wxs must not duplicate it"
+    );
+
+    let application_files = wix
+        .split("<Component Id=\"ApplicationFiles\"")
+        .nth(1)
+        .expect("WiX must define ApplicationFiles")
+        .split("</Component>")
+        .next()
+        .expect("ApplicationFiles component must terminate");
+    let shortcut = wix
+        .split("<Component Id=\"ApplicationShortcut\"")
+        .nth(1)
+        .expect("WiX must define ApplicationShortcut")
+        .split("</Component>")
+        .next()
+        .expect("ApplicationShortcut component must terminate");
+
+    assert!(
+        application_files.contains("Root=\"HKLM\"")
+            && application_files.contains("Name=\"installed\""),
+        "per-machine installation marker must live with per-machine application files"
+    );
+    assert!(
+        !application_files.contains("Root=\"HKCU\""),
+        "ApplicationFiles must not contain per-user registry state"
+    );
+    assert!(
+        shortcut.contains("Root=\"HKCU\"")
+            && shortcut.contains("Name=\"shortcut\"")
+            && shortcut.contains("KeyPath=\"yes\""),
+        "Start Menu shortcut component must use an HKCU registry KeyPath"
+    );
+    assert!(
+        !shortcut.contains("Root=\"HKLM\""),
+        "shortcut component must not mix per-user shortcut data with HKLM state"
     );
 }
 
