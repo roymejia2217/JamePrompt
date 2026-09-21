@@ -33,8 +33,8 @@ fn release_workflow_includes_windows_artifacts_in_the_shared_release_pipeline() 
         &workflow,
         &[
             "runs-on: windows-latest",
-            "Install WiX Toolset",
-            "Install cargo-wix",
+            "Install pinned WiX Toolset",
+            "Install pinned cargo-wix",
             "Build Windows binaries",
             "RUSTFLAGS: -C target-feature=+crt-static",
             "Validate Windows runtime dependencies",
@@ -49,9 +49,10 @@ fn release_workflow_includes_windows_artifacts_in_the_shared_release_pipeline() 
             "Where-Object { $_.kind -contains \"bin\" }",
             "Copy-Item $source \"$portableRoot/$binaryName.exe\"",
             "scripts/install_appimage_tools.sh",
-            "cargo wix --no-build --target x86_64-pc-windows-msvc",
-            "--target-bin-dir \"target/$env:WINDOWS_TARGET/release\"",
-            "--nocapture",
+            "scripts/build_windows_msi.ps1",
+            "scripts/validate_windows_msi.ps1",
+            "wixtoolset --version 3.14.1.20250415",
+            "cargo install cargo-wix --version 0.3.9 --locked",
         ],
     );
     assert!(
