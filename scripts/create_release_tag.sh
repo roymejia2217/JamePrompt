@@ -26,6 +26,7 @@ git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null && {
   exit 2
 }
 
+python3 scripts/validate_main_ci_evidence.py --sha "$head_commit"
 scripts/verify_change_gate.sh
 python3 scripts/validate_release_gate.py \
   --tag "$tag" \
