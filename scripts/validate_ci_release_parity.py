@@ -246,6 +246,23 @@ def validate_parity(ci: dict[str, Any], release: dict[str, Any]) -> None:
             f"{sorted(missing_release_needs)}"
         )
 
+    release_step_names = step_names(release_job, "Release/release")
+    require_tokens(
+        job_text(release_job),
+        ("scripts/validate_reusable_release_run.py",),
+        "Release/release",
+    )
+    require_order(
+        release_step_names,
+        (
+            "Checkout release tooling",
+            "Validate reusable release run provenance",
+            "Download artifacts from existing run",
+            "Create GitHub release",
+        ),
+        "Release/release",
+    )
+
     release_condition = str(release_job.get("if", ""))
     for job_name in ("deb", "arch", "rpm", "appimage", "windows"):
         token = f"needs.{job_name}.result == 'success'"
@@ -285,7 +302,15 @@ def fixture_workflows() -> tuple[dict[str, Any], dict[str, Any]]:
             f"needs.{job_name}.result == 'success'"
             for job_name in ("deb", "arch", "rpm", "appimage", "windows")
         ),
-        "steps": [],
+        "steps": [
+            {"name": "Checkout release tooling", "run": "true"},
+            {
+                "name": "Validate reusable release run provenance",
+                "run": "python3 scripts/validate_reusable_release_run.py",
+            },
+            {"name": "Download artifacts from existing run", "run": "true"},
+            {"name": "Create GitHub release", "run": "true"},
+        ],
     }
     return {"jobs": ci_jobs}, {"jobs": release_jobs}
 

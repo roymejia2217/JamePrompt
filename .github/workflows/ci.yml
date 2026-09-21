@@ -92,6 +92,9 @@ jobs:
       - name: Validate main CI evidence validator
         run: python3 scripts/validate_main_ci_evidence.py --self-test
 
+      - name: Validate reusable release run provenance validator
+        run: python3 scripts/validate_reusable_release_run.py --self-test
+
       - name: Validate CI and Release parity validator
         run: python3 scripts/validate_ci_release_parity.py --self-test
 

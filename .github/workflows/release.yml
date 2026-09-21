@@ -408,6 +408,18 @@ jobs:
           path: release-artifacts
           merge-multiple: true
 
+      - name: Validate reusable release run provenance
+        if: ${{ inputs.publish_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TARGET_SHA="$(git rev-parse "${RELEASE_REF}^{}")"
+          python3 scripts/validate_reusable_release_run.py \
+            --run-id "${{ inputs.publish_run_id }}" \
+            --tag "$RELEASE_REF" \
+            --target-sha "$TARGET_SHA" \
+            --current-run-id "$GITHUB_RUN_ID"
+
       - name: Download artifacts from existing run
         if: ${{ inputs.publish_run_id != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
