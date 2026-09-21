@@ -181,9 +181,9 @@ fn wix_source_defines_production_windows_installer_contract() {
     );
     assert!(
         shortcut.contains("Root=\"HKCU\"")
-            && shortcut.contains("Name=\"shortcut\"")
+            && shortcut.contains("Name=\"installed\"")
             && shortcut.contains("KeyPath=\"yes\""),
-        "Start Menu shortcut component must use an HKCU registry KeyPath"
+        "Start Menu shortcut component must preserve its historical HKCU registry KeyPath"
     );
     assert!(
         !shortcut.contains("Root=\"HKLM\""),
