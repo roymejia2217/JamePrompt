@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 $ResolvedMsi = (Resolve-Path $MsiPath).Path
 $InstallDirectory = Join-Path $env:ProgramFiles "JamePrompt"
 $InstalledBinary = Join-Path $InstallDirectory "jame-prompt.exe"
+$MachineMarker = "HKLM:\SOFTWARE\JamePrompt"
 $CommonShortcut = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\JamePrompt\JamePrompt.lnk"
 $UserShortcut = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\JamePrompt\JamePrompt.lnk"
 $TempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("jameprompt-msi-" + [Guid]::NewGuid())
@@ -69,6 +70,10 @@ try {
         throw "MSI install did not register JamePrompt in Windows Apps & Features"
     }
 
+    if (-not (Test-Path $MachineMarker)) {
+        throw "MSI install did not create machine registry marker: $MachineMarker"
+    }
+
     if (-not ((Test-Path $CommonShortcut) -or (Test-Path $UserShortcut))) {
         throw "MSI install did not create the expected Start Menu shortcut"
     }
@@ -93,6 +98,9 @@ finally {
     }
     if (@(Get-JamePromptUninstallEntries).Count -gt 0) {
         throw "MSI uninstall left Apps & Features registration behind"
+    }
+    if (Test-Path $MachineMarker) {
+        throw "MSI uninstall left machine registry marker behind: $MachineMarker"
     }
     if ((Test-Path $CommonShortcut) -or (Test-Path $UserShortcut)) {
         throw "MSI uninstall left Start Menu shortcut behind"
