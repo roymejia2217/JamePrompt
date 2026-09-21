@@ -43,11 +43,22 @@ fn rpm_release_uses_supported_digest_pinned_fedora_builder() {
 }
 
 #[test]
-fn rpm_builder_uses_fedora_rust_and_enforces_project_minimum() {
+fn rpm_builder_sources_project_minimum_from_cargo_manifest() {
     let builder = read_file("scripts/build_rpm_fedora.sh");
+    let manifest = read_file("Cargo.toml");
+
+    assert!(
+        manifest
+            .lines()
+            .any(|line| line.trim_start().starts_with("rust-version = ")),
+        "Cargo.toml must declare the authoritative package rust-version"
+    );
 
     for required in [
-        "MINIMUM_RUST_VERSION=\"1.88.0\"",
+        "read_project_rust_version()",
+        "rust-version",
+        "Cargo.toml",
+        "MINIMUM_RUST_VERSION=\"$(read_project_rust_version Cargo.toml)\"",
         "dnf -y install",
         "rpm-build",
         "cargo",
@@ -61,10 +72,25 @@ fn rpm_builder_uses_fedora_rust_and_enforces_project_minimum() {
     ] {
         assert!(
             builder.contains(required),
-            "RPM builder must include toolchain contract: {}",
+            "RPM builder must include manifest-sourced toolchain contract: {}",
             required
         );
     }
+
+    let minimum_assignments: Vec<_> = builder
+        .lines()
+        .filter(|line| line.trim_start().starts_with("MINIMUM_RUST_VERSION="))
+        .collect();
+
+    assert_eq!(
+        minimum_assignments.len(),
+        1,
+        "RPM builder must have exactly one derived MINIMUM_RUST_VERSION assignment"
+    );
+    assert!(
+        minimum_assignments[0].contains("$(read_project_rust_version Cargo.toml)"),
+        "RPM builder must derive MINIMUM_RUST_VERSION from Cargo.toml rather than duplicate it"
+    );
 
     for forbidden in ["curl ", "sh.rustup.rs", "rustup "] {
         assert!(
