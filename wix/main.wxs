@@ -78,7 +78,7 @@
         <RegistryValue
           Root="HKCU"
           Key="Software\JamePrompt"
-          Name="shortcut"
+          Name="installed"
           Type="integer"
           Value="1"
           KeyPath="yes" />
