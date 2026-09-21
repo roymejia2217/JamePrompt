@@ -60,7 +60,8 @@ fn protected_ci_jobs_have_explicit_fail_closed_timeouts() {
             "timeout-minutes: 10",
         ),
         ("test-linux", Some("test-windows"), "timeout-minutes: 45"),
-        ("test-windows", Some("test_rpm"), "timeout-minutes: 45"),
+        ("test-windows", Some("test_arch"), "timeout-minutes: 45"),
+        ("test_arch", Some("test_rpm"), "timeout-minutes: 45"),
         ("test_rpm", Some("test"), "timeout-minutes: 45"),
         ("test", None, "timeout-minutes: 5"),
     ];
