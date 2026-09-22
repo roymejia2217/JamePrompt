@@ -55,6 +55,51 @@ def prerelease_numbers_for(version: ReleaseVersion, kind: str) -> list[int]:
     return numbers
 
 
+def stable_exists_for(version: ReleaseVersion) -> bool:
+    stable_tag = f"v{version.base}"
+    return bool(run_git("tag", "--list", stable_tag).splitlines())
+
+
+def validate_release_progression(
+    version: ReleaseVersion,
+    kind: str,
+    *,
+    alpha_numbers: list[int],
+    beta_numbers: list[int],
+    stable_exists: bool,
+) -> None:
+    if kind == "alpha":
+        assert version.prerelease is not None
+        number = int(version.prerelease.removeprefix("alpha."))
+        if beta_numbers or stable_exists:
+            raise ReleaseGateError(
+                "alpha release is not allowed after beta or stable for the same version"
+            )
+        if any(existing > number for existing in alpha_numbers):
+            raise ReleaseGateError(
+                "alpha number must not be older than an existing alpha"
+            )
+        return
+
+    if kind == "beta":
+        assert version.prerelease is not None
+        number = int(version.prerelease.removeprefix("beta."))
+        if stable_exists:
+            raise ReleaseGateError(
+                "beta release is not allowed after stable for the same version"
+            )
+        if any(existing > number for existing in beta_numbers):
+            raise ReleaseGateError(
+                "beta number must not be older than an existing beta"
+            )
+        return
+
+    if not beta_numbers:
+        raise ReleaseGateError(
+            "a stable release requires an existing beta for the same version"
+        )
+
+
 def validate_release(
     tag: str,
     main_ref: str,
@@ -84,28 +129,117 @@ def validate_release(
             "release target must be reachable from the protected main branch"
         )
 
-    if kind in {"alpha", "beta"}:
-        assert version.prerelease is not None
-        number = int(version.prerelease.removeprefix(f"{kind}."))
-        existing_numbers = prerelease_numbers_for(version, kind)
-        if any(existing > number for existing in existing_numbers):
-            raise ReleaseGateError(
-                f"{kind} number must not be older than an existing {kind}"
-            )
-    else:
-        beta_numbers = prerelease_numbers_for(version, "beta")
-        if not beta_numbers:
-            raise ReleaseGateError(
-                "a stable release requires an existing beta for the same version"
-            )
+    alpha_numbers = prerelease_numbers_for(version, "alpha")
+    beta_numbers = prerelease_numbers_for(version, "beta")
+    validate_release_progression(
+        version,
+        kind,
+        alpha_numbers=alpha_numbers,
+        beta_numbers=beta_numbers,
+        stable_exists=stable_exists_for(version),
+    )
 
     return version
+
+
+def expect_progression_error(
+    name: str,
+    tag: str,
+    *,
+    alpha_numbers: list[int],
+    beta_numbers: list[int],
+    stable_exists: bool,
+) -> None:
+    version = parse_tag(tag)
+    try:
+        validate_release_progression(
+            version,
+            release_kind(version),
+            alpha_numbers=alpha_numbers,
+            beta_numbers=beta_numbers,
+            stable_exists=stable_exists,
+        )
+    except ReleaseGateError:
+        return
+    raise AssertionError(f"{name} progression was accepted")
 
 
 def self_test() -> None:
     assert release_kind(parse_tag("v1.2.0")) == "stable"
     assert release_kind(parse_tag("v1.2.0-alpha.1")) == "alpha"
     assert release_kind(parse_tag("v1.2.0-beta.9")) == "beta"
+
+    validate_release_progression(
+        parse_tag("v1.2.0-alpha.2"),
+        "alpha",
+        alpha_numbers=[1],
+        beta_numbers=[],
+        stable_exists=False,
+    )
+    validate_release_progression(
+        parse_tag("v1.2.0-beta.10"),
+        "beta",
+        alpha_numbers=[1, 2],
+        beta_numbers=[9],
+        stable_exists=False,
+    )
+    validate_release_progression(
+        parse_tag("v1.2.0"),
+        "stable",
+        alpha_numbers=[1, 2],
+        beta_numbers=[9],
+        stable_exists=False,
+    )
+
+    alpha_after_beta = "alpha_after_beta"
+    expect_progression_error(
+        alpha_after_beta,
+        "v1.2.0-alpha.3",
+        alpha_numbers=[1, 2],
+        beta_numbers=[1],
+        stable_exists=False,
+    )
+    alpha_after_stable = "alpha_after_stable"
+    expect_progression_error(
+        alpha_after_stable,
+        "v1.2.0-alpha.3",
+        alpha_numbers=[1, 2],
+        beta_numbers=[],
+        stable_exists=True,
+    )
+    beta_after_stable = "beta_after_stable"
+    expect_progression_error(
+        beta_after_stable,
+        "v1.2.0-beta.10",
+        alpha_numbers=[1, 2],
+        beta_numbers=[9],
+        stable_exists=True,
+    )
+    old_alpha = "old_alpha"
+    expect_progression_error(
+        old_alpha,
+        "v1.2.0-alpha.1",
+        alpha_numbers=[2],
+        beta_numbers=[],
+        stable_exists=False,
+    )
+    old_beta = "old_beta"
+    expect_progression_error(
+        old_beta,
+        "v1.2.0-beta.8",
+        alpha_numbers=[],
+        beta_numbers=[9],
+        stable_exists=False,
+    )
+    stable_without_beta = "stable_without_beta"
+    expect_progression_error(
+        stable_without_beta,
+        "v1.2.0",
+        alpha_numbers=[1],
+        beta_numbers=[],
+        stable_exists=False,
+    )
+
     try:
         release_kind(parse_tag("v1.2.0-rc.1"))
     except ReleaseMetadataError:
