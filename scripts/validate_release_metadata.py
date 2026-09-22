@@ -154,6 +154,11 @@ def validate_changelog_for_tag(path: Path, tag: str) -> ReleaseMetadata:
     )
 
 
+def render_tag_message(metadata: ReleaseMetadata) -> str:
+    """Render the annotated Git tag message from validated release metadata."""
+    return f"{metadata.tag}\n\n{metadata.notes.strip()}\n"
+
+
 def validate_existing_release(payload: dict[str, Any], metadata: ReleaseMetadata) -> None:
     expected = {
         "tagName": metadata.tag,
@@ -260,6 +265,9 @@ def self_test() -> None:
                 "isPrerelease": metadata.is_prerelease,
             }
             validate_existing_release(payload, metadata)
+            tag_message = render_tag_message(metadata)
+            assert tag_message.startswith(f"{tag}\n\n")
+            assert tag_message.endswith(metadata.notes)
 
         invalid_kind = root / "invalid-kind.md"
         invalid_kind.write_text(fixture_changelog("1.2.0-rc.1"), encoding="utf-8")
@@ -293,6 +301,7 @@ def main() -> int:
     parser.add_argument("--tag")
     parser.add_argument("--changelog", type=Path, default=Path("CHANGELOG.md"))
     parser.add_argument("--write-notes", type=Path)
+    parser.add_argument("--write-tag-message", type=Path)
     parser.add_argument("--existing-release-json", type=Path)
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
@@ -308,6 +317,11 @@ def main() -> int:
         metadata = validate_changelog_for_tag(args.changelog, args.tag)
         if args.write_notes is not None:
             args.write_notes.write_text(metadata.notes, encoding="utf-8")
+        if args.write_tag_message is not None:
+            args.write_tag_message.write_text(
+                render_tag_message(metadata),
+                encoding="utf-8",
+            )
         if args.existing_release_json is not None:
             payload = json.loads(
                 args.existing_release_json.read_text(encoding="utf-8")
