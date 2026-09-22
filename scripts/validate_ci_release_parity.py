@@ -257,6 +257,50 @@ def validate_parity(ci: dict[str, Any], release: dict[str, Any]) -> None:
             f"Release/{platform}",
         )
 
+    release_gate_job = get_job(release, "release-gate", "Release/release-gate")
+    release_gate_checkout = step_by_name(
+        release_gate_job,
+        "Checkout trusted release gate tooling",
+        "Release/release-gate",
+    )
+    release_gate_checkout_with = release_gate_checkout.get("with")
+    if not isinstance(release_gate_checkout_with, dict):
+        raise ParityError(
+            "Release/release-gate: trusted tooling must use workflow identity"
+        )
+    if release_gate_checkout_with.get("ref") != "${{ github.workflow_sha }}":
+        raise ParityError(
+            "Release/release-gate: trusted tooling must use workflow identity"
+        )
+    if release_gate_checkout_with.get("fetch-depth") != 0:
+        raise ParityError(
+            "Release/release-gate: trusted checkout requires fetch-depth: 0"
+        )
+    if release_gate_checkout_with.get("persist-credentials") is not False:
+        raise ParityError(
+            "Release/release-gate: trusted checkout requires persist-credentials: false"
+        )
+
+    release_gate_text = job_text(release_gate_job)
+    require_tokens(
+        release_gate_text,
+        (
+            "scripts/validate_release_gate.py",
+            '--source-ref "$RELEASE_REF"',
+        ),
+        "Release/release-gate",
+    )
+    require_order(
+        step_names(release_gate_job, "Release/release-gate"),
+        (
+            "Checkout trusted release gate tooling",
+            "Verify trusted release gate tooling identity",
+            "Fetch protected main and tags",
+            "Validate release provenance and version",
+        ),
+        "Release/release-gate",
+    )
+
     ci_aggregate = get_job(ci, "test", "CI/test")
     missing_ci_needs = CI_AGGREGATE_NEEDS - normalized_needs(ci_aggregate, "CI/test")
     if missing_ci_needs:
@@ -395,7 +439,37 @@ def fixture_workflows() -> tuple[dict[str, Any], dict[str, Any]]:
         release_jobs[contract.release_job] = {"steps": release_steps}
 
     ci_jobs["test"] = {"needs": sorted(CI_AGGREGATE_NEEDS), "steps": []}
-    release_jobs["release-gate"] = {"steps": []}
+    release_jobs["release-gate"] = {
+        "steps": [
+            {
+                "name": "Checkout trusted release gate tooling",
+                "uses": "actions/checkout@pinned",
+                "with": {
+                    "ref": "${{ github.workflow_sha }}",
+                    "fetch-depth": 0,
+                    "persist-credentials": False,
+                },
+            },
+            {
+                "name": "Verify trusted release gate tooling identity",
+                "run": (
+                    "EXPECTED_WORKFLOW_SHA=${{ github.workflow_sha }}\n"
+                    "echo 'Trusted release gate tooling identity mismatch' >/dev/null"
+                ),
+            },
+            {
+                "name": "Fetch protected main and tags",
+                "run": "git fetch origin main --tags --force",
+            },
+            {
+                "name": "Validate release provenance and version",
+                "run": (
+                    'python3 scripts/validate_release_gate.py --tag "$RELEASE_REF" '
+                    '--main-ref origin/main --source-ref "$RELEASE_REF"'
+                ),
+            },
+        ]
+    }
     release_jobs["release"] = {
         "needs": sorted(RELEASE_REQUIRED_NEEDS),
         "if": " && ".join(
@@ -543,6 +617,25 @@ def run_self_test() -> None:
     else:
         raise AssertionError("missing publication attestation must fail parity validation")
 
+
+    broken_ci, broken_release = fixture_workflows()
+    release_gate_checkout = step_by_name(
+        broken_release["jobs"]["release-gate"],
+        "Checkout trusted release gate tooling",
+        "Release/release-gate",
+    )
+    release_gate_checkout["with"]["ref"] = "${{ env.RELEASE_REF }}"
+    try:
+        validate_parity(broken_ci, broken_release)
+    except ParityError as error:
+        if "Release/release-gate: trusted tooling must use workflow identity" not in str(error):
+            raise AssertionError(
+                "release-gate trusted tooling failure was not attributed correctly"
+            ) from error
+    else:
+        raise AssertionError(
+            "release-ref checkout in release-gate must fail parity validation"
+        )
 
     broken_ci, broken_release = fixture_workflows()
     checkout_step = step_by_name(
