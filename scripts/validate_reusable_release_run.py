@@ -4,18 +4,15 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
-import urllib.error
-import urllib.request
 from typing import Any
 
+from github_api import GitHubApiError, github_token, repository_url, request_json
 from prepare_release_version import parse_tag
 
-API_ROOT = "https://api.github.com"
-API_VERSION = "2022-11-28"
+
 WORKFLOW_NAME = "Release"
 WORKFLOW_PATH = ".github/workflows/release.yml"
 REQUIRED_JOBS = {
@@ -34,45 +31,25 @@ EXPECTED_PRERELEASE_ARTIFACTS = {
     "windows-portable",
 }
 EXPECTED_STABLE_ARTIFACTS = EXPECTED_PRERELEASE_ARTIFACTS | {"windows-msi"}
-REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-
-
 class ReusableRunError(ValueError):
     """Raised when an existing Release run cannot be safely reused."""
 
 
-def api_headers() -> dict[str, str]:
-    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
-    if not token:
-        raise ReusableRunError("GH_TOKEN or GITHUB_TOKEN is required")
-    return {
-        "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {token}",
-        "X-GitHub-Api-Version": API_VERSION,
-        "User-Agent": "JamePrompt-reusable-release-provenance",
-    }
-
-
 def fetch_json(repository: str, path: str) -> dict[str, Any]:
-    if not REPOSITORY_PATTERN.fullmatch(repository):
-        raise ReusableRunError(f"invalid GitHub repository identifier: {repository}")
-    request = urllib.request.Request(
-        f"{API_ROOT}/repos/{repository}/{path}",
-        headers=api_headers(),
-    )
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            payload = json.load(response)
-    except (
-        urllib.error.HTTPError,
-        urllib.error.URLError,
-        TimeoutError,
-        json.JSONDecodeError,
-    ) as error:
-        raise ReusableRunError(f"unable to query GitHub Actions provenance: {error}") from error
-    if not isinstance(payload, dict):
-        raise ReusableRunError("GitHub Actions response root must be an object")
-    return payload
+        response = request_json(
+            repository_url(repository, path),
+            user_agent="JamePrompt-reusable-release-provenance",
+            token=github_token(required=True),
+        )
+    except GitHubApiError as error:
+        raise ReusableRunError(
+            f"unable to query GitHub Actions provenance: {error}"
+        ) from error
+
+    if response.payload is None:
+        raise ReusableRunError("GitHub Actions response body is missing")
+    return response.payload
 
 
 def expected_artifacts(tag: str) -> set[str]:

@@ -14,15 +14,15 @@ fn read_file(relative: &str) -> String {
 #[test]
 fn release_probe_distinguishes_existing_absent_and_api_failure() {
     let probe = read_file("scripts/probe_github_release.py");
+    let transport = read_file("scripts/github_api.py");
 
     for required in [
-        "API_VERSION = \"2026-03-10\"",
         "classify_status",
         "status == 200",
         "status == 404",
         "unexpected GitHub Release API status",
-        "HTTPError",
-        "URLError",
+        "request_json",
+        "accepted_statuses=(200, 404)",
         "--write-status",
         "--write-json",
         "--self-test",
@@ -30,6 +30,19 @@ fn release_probe_distinguishes_existing_absent_and_api_failure() {
         assert!(
             probe.contains(required),
             "release existence probe missing contract: {}",
+            required
+        );
+    }
+
+    for required in [
+        "API_VERSION = \"2026-03-10\"",
+        "HTTPError",
+        "URLError",
+        "X-GitHub-Api-Version",
+    ] {
+        assert!(
+            transport.contains(required),
+            "shared GitHub REST transport missing probe dependency: {}",
             required
         );
     }

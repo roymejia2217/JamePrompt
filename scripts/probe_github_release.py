@@ -9,12 +9,17 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+
+from github_api import (
+    API_ROOT,
+    GitHubApiError,
+    github_token,
+    repository_url,
+    request_json,
+)
 
 
-API_VERSION = "2026-03-10"
 EXISTING = "existing"
 ABSENT = "absent"
 
@@ -51,14 +56,14 @@ def normalize_release_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def release_url(api_url: str, repository: str, tag: str) -> str:
-    parts = repository.split("/")
-    if len(parts) != 2 or not all(parts):
-        raise ReleaseProbeError("repository must use OWNER/REPO format")
-    owner, name = parts
-    return (
-        f"{api_url.rstrip('/')}/repos/{quote(owner, safe='')}/"
-        f"{quote(name, safe='')}/releases/tags/{quote(tag, safe='')}"
-    )
+    try:
+        return repository_url(
+            repository,
+            f"releases/tags/{quote(tag, safe='')}",
+            api_root=api_url,
+        )
+    except GitHubApiError as error:
+        raise ReleaseProbeError(str(error)) from error
 
 
 def fetch_published_release(
@@ -70,46 +75,25 @@ def fetch_published_release(
     if not token:
         raise ReleaseProbeError("GitHub API token is required")
 
-    request = Request(
-        release_url(api_url, repository, tag),
-        headers={
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {token}",
-            "User-Agent": "JamePrompt-release-probe",
-            "X-GitHub-Api-Version": API_VERSION,
-        },
-        method="GET",
-    )
-
     try:
-        with urlopen(request, timeout=30) as response:
-            state = classify_status(response.status)
-            raw = response.read().decode("utf-8")
-    except HTTPError as error:
-        state = classify_status(error.code)
-        if state == ABSENT:
-            return ABSENT, None
-        raise AssertionError("unreachable HTTP status classification") from error
-    except URLError as error:
-        raise ReleaseProbeError(
-            f"GitHub Release API request failed: {error.reason}"
-        ) from error
-    except OSError as error:
+        response = request_json(
+            release_url(api_url, repository, tag),
+            user_agent="JamePrompt-release-probe",
+            token=token,
+            accepted_statuses=(200, 404),
+        )
+    except GitHubApiError as error:
         raise ReleaseProbeError(
             f"GitHub Release API request failed: {error}"
         ) from error
 
-    if state != EXISTING:
-        raise ReleaseProbeError(f"unexpected successful probe state: {state}")
+    state = classify_status(response.status)
+    if state == ABSENT:
+        return ABSENT, None
 
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as error:
-        raise ReleaseProbeError("GitHub Release API returned invalid JSON") from error
-    if not isinstance(payload, dict):
-        raise ReleaseProbeError("GitHub Release API response root must be an object")
-
-    return EXISTING, normalize_release_payload(payload)
+    if response.payload is None:
+        raise ReleaseProbeError("GitHub Release API response body is missing")
+    return EXISTING, normalize_release_payload(response.payload)
 
 
 def self_test() -> None:
@@ -167,7 +151,7 @@ def main() -> int:
     parser.add_argument("--write-json", type=Path)
     parser.add_argument(
         "--api-url",
-        default=os.environ.get("GITHUB_API_URL", "https://api.github.com"),
+        default=os.environ.get("GITHUB_API_URL", API_ROOT),
     )
     parser.add_argument("--token-env", default="GH_TOKEN")
     parser.add_argument("--self-test", action="store_true")
@@ -189,11 +173,12 @@ def main() -> int:
         )
 
     try:
+        token = github_token(required=True, env_name=args.token_env)
         state, payload = fetch_published_release(
             args.api_url,
             args.repository,
             args.tag,
-            os.environ.get(args.token_env, ""),
+            token or "",
         )
         if state == EXISTING:
             assert payload is not None
@@ -205,7 +190,7 @@ def main() -> int:
             if args.write_json.exists():
                 args.write_json.unlink()
         args.write_status.write_text(state + "\n", encoding="utf-8")
-    except (OSError, ReleaseProbeError) as error:
+    except (OSError, GitHubApiError, ReleaseProbeError) as error:
         print(f"release existence probe error: {error}", file=sys.stderr)
         return 2
 

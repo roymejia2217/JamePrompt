@@ -14,9 +14,14 @@ fn read_file(relative: &str) -> String {
 #[test]
 fn release_evidence_validator_requires_successful_post_merge_main_ci() {
     let validator = read_file("scripts/validate_main_ci_evidence.py");
+    let transport = read_file("scripts/github_api.py");
+
+    assert!(
+        transport.contains("API_ROOT = \"https://api.github.com\""),
+        "shared GitHub REST transport must own the API root"
+    );
 
     for required in [
-        "api.github.com",
         "actions/runs",
         "head_sha",
         "event",

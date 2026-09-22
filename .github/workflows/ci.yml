@@ -74,6 +74,9 @@ jobs:
       - name: Validate GitHub workflow YAML syntax
         run: python3 scripts/validate_workflow_yaml.py .github/workflows
 
+      - name: Validate shared GitHub REST transport
+        run: python3 scripts/github_api.py --self-test
+
       - name: Validate release version contract
         run: python3 scripts/prepare_release_version.py --self-test
 
