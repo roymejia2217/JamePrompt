@@ -8,7 +8,7 @@ fn read_release_workflow() -> String {
 }
 
 #[test]
-fn release_job_checks_out_repository_before_using_release_tooling() {
+fn release_job_checks_out_trusted_repository_before_using_release_tooling() {
     let workflow = read_release_workflow();
     let release_job = workflow
         .split("\n  release:\n")
@@ -16,8 +16,8 @@ fn release_job_checks_out_repository_before_using_release_tooling() {
         .expect("release workflow must define a release job");
 
     let checkout = release_job
-        .find("- name: Checkout release tooling\n        uses: actions/checkout@")
-        .expect("release job must checkout repository tooling");
+        .find("- name: Checkout trusted release tooling\n        uses: actions/checkout@")
+        .expect("release job must checkout trusted repository tooling");
     let staging = release_job
         .find("python3 scripts/stage_release_assets.py")
         .expect("release job must stage release assets with the tracked script");
@@ -124,7 +124,8 @@ fn release_notes_are_rendered_from_validated_changelog_metadata() {
 
     for required in [
         "python3 scripts/validate_release_metadata.py",
-        "--changelog CHANGELOG.md",
+        "git show \"${TAG_NAME}:CHANGELOG.md\"",
+        "--changelog \"$TAG_CHANGELOG_FILE\"",
         "--write-notes \"$NOTES_FILE\"",
         "--notes-file \"$NOTES_FILE\"",
         "python3 scripts/probe_github_release.py",
