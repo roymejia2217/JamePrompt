@@ -487,21 +487,23 @@ jobs:
           fi
 
           EXISTING_RELEASE_JSON="$RUNNER_TEMP/existing-release.json"
-          if gh release view "$TAG_NAME" \
-            --repo "${{ github.repository }}" \
-            --json tagName,name,body,isPrerelease \
-            > "$EXISTING_RELEASE_JSON" 2>/dev/null; then
+          RELEASE_STATE_FILE="$RUNNER_TEMP/release-state.txt"
+          python3 scripts/probe_github_release.py \
+            --repository "${{ github.repository }}" \
+            --tag "$TAG_NAME" \
+            --write-status "$RELEASE_STATE_FILE" \
+            --write-json "$EXISTING_RELEASE_JSON"
+          RELEASE_STATE="$(cat "$RELEASE_STATE_FILE")"
+
+          if [ "$RELEASE_STATE" = "existing" ]; then
             python3 scripts/validate_release_metadata.py \
               --tag "$TAG_NAME" \
               --changelog CHANGELOG.md \
               --existing-release-json "$EXISTING_RELEASE_JSON"
 
-            EXISTING_RELEASE_ASSETS_JSON="$RUNNER_TEMP/existing-release-assets.json"
             MISSING_RELEASE_FILES_PATH="$RUNNER_TEMP/missing-release-files.txt"
-            gh api "repos/${{ github.repository }}/releases/tags/$TAG_NAME" \
-              > "$EXISTING_RELEASE_ASSETS_JSON"
             python3 scripts/validate_existing_release_assets.py \
-              --release-json "$EXISTING_RELEASE_ASSETS_JSON" \
+              --release-json "$EXISTING_RELEASE_JSON" \
               --asset-dir release-artifacts \
               --write-missing "$MISSING_RELEASE_FILES_PATH"
             mapfile -t MISSING_RELEASE_FILES < "$MISSING_RELEASE_FILES_PATH"
@@ -512,11 +514,14 @@ jobs:
             else
               echo "No missing release assets to upload."
             fi
-          else
+          elif [ "$RELEASE_STATE" = "absent" ]; then
             gh release create "$TAG_NAME" "${RELEASE_FILES[@]}" \
               --repo "${{ github.repository }}" \
               --verify-tag \
               --title "$TAG_NAME" \
               --notes-file "$NOTES_FILE" \
               "${PRERELEASE_ARGS[@]}"
+          else
+            echo "Unexpected release probe state: $RELEASE_STATE" >&2
+            exit 1
           fi

@@ -89,6 +89,9 @@ jobs:
       - name: Validate published Release asset immutability contract
         run: python3 scripts/validate_existing_release_assets.py --self-test
 
+      - name: Validate GitHub Release existence probe
+        run: python3 scripts/probe_github_release.py --self-test
+
       - name: Validate pull request description contract
         run: python3 scripts/validate_pr_description.py --self-test
 
