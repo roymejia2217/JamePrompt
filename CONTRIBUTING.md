@@ -1,32 +1,126 @@
 # Contributing to JamePrompt
 
+## Repository metadata standards
+
+JamePrompt treats repository metadata as executable acceptance input, not as prose-only policy.
+The authoritative standards and repository profiles are:
+
+- **Commits:** [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) through pinned Commitlint.
+- **Pull requests:** GitHub pull request templates plus the checked-in JamePrompt body schema.
+- **Versions and tags:** [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
+- **Release notes:** [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) categories and ordering.
+
+Local hooks provide fast feedback. GitHub required checks remain the authoritative merge boundary.
+
 ## Commit messages
 
-JamePrompt uses the maintained Conventional Commits implementation provided by
-`@commitlint/cli` and `@commitlint/config-conventional`. Commit messages must
-use the standard format:
+Commit messages use the Conventional Commits structure:
 
 ```text
 type(scope): subject
+
+A meaningful body explaining the change.
+
+Optional-Trailer: value
 ```
 
-The scope is optional. The conventional configuration supplies the closed
-standard type vocabulary (`build`, `chore`, `ci`, `docs`, `feat`, `fix`,
-`perf`, `refactor`, `revert`, `style`, and `test`) and the associated
-Conventional Commits rules. Breaking changes use `!` before the colon and/or
-the standard `BREAKING CHANGE:` footer.
+The scope is optional. The configured conventional type vocabulary is `build`, `chore`,
+`ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, and
+`test`. Breaking changes use `!` before the colon and/or the standard
+`BREAKING CHANGE:` footer.
+
+JamePrompt deliberately uses a stricter Conventional Commits profile: the body is required,
+must be separated from the header by a blank line, and must contain at least 20 characters.
+Trailers remain optional and, when present, must be separated from the body by a blank line.
+PR titles use the same Conventional Commit header grammar but do not require a body.
 
 Examples:
 
 ```text
 feat(ui): add prompt export
-fix(hotkeys): restore portal registration
-refactor(db)!: replace the repository interface
+
+Document the prompt export behavior for the supported user workflow.
 ```
 
-The body and footer, when present, must be separated from the subject by a
-blank line. The same rule applies between the body and footer. These are
-configured as errors, not warnings.
+```text
+fix(hotkeys): restore portal registration
+
+Keep the existing portal registration active during window recreation.
+
+Refs: #123
+```
+
+## Pull request body
+
+GitHub automatically supplies `.github/pull_request_template.md`. The body must contain
+exactly these level-two sections, in this order:
+
+```text
+## Summary
+## Motivation
+## Changes
+## Verification
+## Risk and rollback
+## Release impact
+```
+
+All six sections must contain non-placeholder content. Unknown, duplicated, missing, or
+reordered level-two sections are rejected by `scripts/validate_pr_description.py`.
+The PR title is independently checked against the Conventional Commit header profile.
+
+Open a reviewed pull request through the checked-in path:
+
+```bash
+scripts/open_pull_request.sh \
+  --title 'type(scope): subject' \
+  --body-file path/to/pull-request.md
+```
+
+## Release metadata
+
+`CHANGELOG.md` is the source of truth for GitHub Release titles and bodies. It retains an
+`[Unreleased]` section and uses the Keep a Changelog change categories in this exact order:
+
+```text
+Added
+Changed
+Deprecated
+Removed
+Fixed
+Security
+```
+
+A release entry must use an ISO date and a SemVer version heading, for example:
+
+```markdown
+## [1.2.0-beta.10] - 2026-09-21
+```
+
+Every category must contain at least one Markdown bullet, and at least one category must
+describe a notable change rather than `None.`.
+
+The supported release profile is:
+
+- `vMAJOR.MINOR.PATCH-alpha.N` — alpha prerelease.
+- `vMAJOR.MINOR.PATCH-beta.N` — beta prerelease.
+- `vMAJOR.MINOR.PATCH` — stable release.
+
+Other prerelease labels such as `rc.N` are rejected by the repository profile. Stable
+release creation retains the existing requirement that a beta for the same base version
+already exists.
+
+The GitHub Release title is exactly the tag. The GitHub Release body is rendered from the
+matching validated `CHANGELOG.md` entry. If a GitHub Release already exists, its tag,
+title, prerelease flag, and body must match the changelog-derived metadata before artifacts
+can be replaced.
+
+Create a tag only after the changelog entry has been merged to protected `main`:
+
+```bash
+scripts/create_release_tag.sh v1.2.0-alpha.1
+scripts/create_release_tag.sh v1.2.0-beta.10
+scripts/create_release_tag.sh v1.2.0
+```
 
 ## Local setup
 
@@ -36,90 +130,53 @@ Install the pinned development dependencies from the repository root:
 npm ci
 ```
 
-The `prepare` script installs the versioned Husky `commit-msg` hook. The hook
-executes the local Commitlint binary, so it does not depend on a globally
-installed Node package.
+The `prepare` script installs the versioned Husky hooks. The `commit-msg` hook executes
+the local Commitlint binary; the `pre-push` hook runs the repository change gate.
 
-Run the acceptance checks with:
+Run focused metadata harnesses with:
 
 ```bash
 npm run test:commitlint
+npm run test:pr-governance
+npm run test:release-metadata
+npm run test:release-gate
 ```
 
-To validate the current commit range manually:
+Run the complete local acceptance gate with:
 
 ```bash
-npm run lint:commit
+npm run verify:change
 ```
 
 ## Delivery gates
 
-The repository enforces delivery controls at each boundary, using Git hooks for
-fast local feedback and GitHub checks as the authoritative merge protection:
-
 | Boundary | Enforced contract |
 | --- | --- |
-| Commit | The Husky `commit-msg` hook runs Commitlint. |
-| Push | The Husky `pre-push` hook runs `npm run verify:change`: message, policy-script, formatting, and locked test checks. |
-| Pull request | The template requires **Summary**, **Verification**, and **Release impact**. GitHub validates that structure and the Conventional Commit PR title from the trusted `main` revision. |
-| Merge | Protected `main` accepts a PR only after its required GitHub checks pass; GitHub native auto-merge uses rebase. |
-| Release | `scripts/create_release_tag.sh` creates an annotated tag only from the current `origin/main`; the workflow accepts only `vMAJOR.MINOR.PATCH` or `vMAJOR.MINOR.PATCH-beta.N`. A stable tag additionally requires a beta for the same version. |
+| Commit | Husky `commit-msg` and protected CI enforce Conventional Commits plus the required body profile. |
+| Push | Husky `pre-push` runs the fail-closed repository change gate. |
+| Pull request | GitHub validates the conventional title and exact six-section body from the trusted base revision. |
+| Merge | Protected `main` accepts only PRs whose required checks pass; linear rebase history is preserved. |
+| Tag | Tag creation requires current protected `main`, successful post-merge CI, valid changelog metadata, SemVer alpha/beta/stable profile, and an annotated tag. |
+| Release | Release provenance, package/lifecycle gates, remote tag identity, changelog-derived metadata, artifact set, and publication concurrency must all pass. |
 
-Open a reviewed, auto-merge-enabled pull request through the checked-in path:
-
-```bash
-scripts/open_pull_request.sh \
-  --title 'type(scope): subject' \
-  --body-file path/to/pull-request.md
-```
-
-Create a beta or stable release tag only after the pull request has merged:
-
-```bash
-scripts/create_release_tag.sh v1.2.0-beta.10
-```
-
-CI treats a newer commit on the same pull request as authoritative and cancels
-the older in-progress CI run for that pull request. Post-merge pushes to
-`main` are not grouped for cancellation; each receives its own validation
-run. Protected CI jobs also use explicit timeouts so a stalled runner fails
-closed instead of consuming the default six-hour GitHub Actions job window.
+CI cancels only superseded pull-request runs. Post-merge pushes to `main` retain independent
+validation runs. Protected jobs use explicit fail-closed timeouts.
 
 ## Workflow supply-chain updates
 
-External GitHub Actions in `.github/workflows` must use a full 40-character
-commit SHA. Keep the human-readable release or channel as an inline comment
-(for example, `# v6`), but never replace the immutable SHA with a moving tag
-or branch. Before changing a pin, resolve the intended upstream tag or branch
-in the action's canonical repository and verify that the selected commit
-belongs to that repository.
+External GitHub Actions in `.github/workflows` must use full 40-character commit SHAs.
+Keep the human-readable release or channel as an inline comment, but never replace the
+immutable SHA with a moving tag or branch.
 
-Release helper binaries follow the same fail-closed rule. `linuxdeploy` and
-`appimagetool` are downloaded from exact GitHub release asset IDs and their
-bytes must match the checked-in SHA-256 values before they are made executable.
-When updating either helper, record the new canonical asset ID and the digest
-reported for that exact asset, update both values together, and let the
-supply-chain regression tests reject any return to latest/continuous
-name-based resolution without integrity verification.
-
-Push-to-PR creation is deliberately not automated in this repository yet. A
-workflow that creates a PR and triggers its checks needs a GitHub App
-installation token (or a user-managed PAT); `GITHUB_TOKEN`-created PRs do not
-run their `pull_request` workflows normally. The checked-in command above is
-the deterministic path until that external credential is installed.
+Release helper binaries follow the same rule. `linuxdeploy` and `appimagetool` are
+resolved from exact release asset IDs and their bytes must match checked-in SHA-256 values
+before execution.
 
 ## Bypass and authoritative enforcement
 
-Git permits bypassing local hooks with `git commit --no-verify`. This is a
-local-development escape hatch, not an approved way to merge code. The
-authoritative control is the `validate-commit-messages` CI job, which runs
-Commitlint against only the commits introduced by a pull request. It is
-intentionally skipped for non-pull-request events so a push or other event
-cannot produce a false commit-range result.
+Local Git hooks can technically be bypassed with Git's `--no-verify`; that is not an
+approved merge path. Required GitHub checks re-run the contracts against PR commits and
+metadata from the trusted base revision.
 
-The protected `main` branch requires a pull request, the required CI checks,
-resolved conversations, and a linear history; its rules also apply to
-administrators and prohibit force pushes and deletions. Review count is a
-GitHub repository setting and must not be claimed here unless it is configured
-there. Those remote settings are managed in GitHub rather than in this
-repository.
+Protected `main` requires the repository's configured required checks and linear history.
+Remote branch settings remain GitHub configuration and must not be inferred from this file.
