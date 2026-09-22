@@ -51,9 +51,9 @@ fn remote_tag_identity_is_checked_before_release_upload_or_creation() {
     let remote_target = release
         .find("git ls-remote --exit-code origin \"refs/tags/$TAG_NAME^{}\"")
         .expect("release publication must query the exact remote annotated tag target");
-    let release_view = release
-        .find("gh release view \"$TAG_NAME\"")
-        .expect("release publication must retain release existence check");
+    let release_probe = release
+        .find("python3 scripts/probe_github_release.py")
+        .expect("release publication must retain deterministic release existence check");
     let release_upload = release
         .find("gh release upload \"$TAG_NAME\"")
         .expect("release publication must retain recovery upload");
@@ -62,7 +62,7 @@ fn remote_tag_identity_is_checked_before_release_upload_or_creation() {
         .expect("release publication must retain release creation");
 
     assert!(
-        remote_target < release_view
+        remote_target < release_probe
             && remote_target < release_upload
             && remote_target < release_create,
         "remote tag identity must be verified before any GitHub Release mutation"
