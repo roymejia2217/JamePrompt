@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from prepare_release_version import (
@@ -37,6 +38,36 @@ def run_git(*args: str) -> str:
 
 
 TAG_CONTENT_COMMAND = "git for-each-ref"
+RELEASE_SOURCE_FILES = (
+    "CHANGELOG.md",
+    "Cargo.toml",
+    "Cargo.lock",
+    "packaging/arch/PKGBUILD",
+    "packaging/rpm/jame-prompt.spec",
+)
+
+
+def validate_source_ref(source_ref: str, version: ReleaseVersion) -> None:
+    if source_ref != version.tag:
+        raise ReleaseGateError("source ref must match release tag")
+
+
+def materialize_release_source(ref: str, root: Path) -> None:
+    for relative in RELEASE_SOURCE_FILES:
+        result = subprocess.run(
+            ["git", "show", f"{ref}:{relative}"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            message = result.stderr.strip() or result.stdout.strip()
+            raise ReleaseGateError(
+                f"unable to read release source file {relative} from {ref}: {message}"
+            )
+        destination = root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(result.stdout, encoding="utf-8")
 
 
 def validate_tag_annotation(tag: str, metadata: ReleaseMetadata) -> None:
@@ -173,6 +204,15 @@ def self_test() -> None:
     assert release_kind(parse_tag("v1.2.0-alpha.1")) == "alpha"
     assert release_kind(parse_tag("v1.2.0-beta.9")) == "beta"
 
+    stable = parse_tag("v1.2.0")
+    validate_source_ref("v1.2.0", stable)
+    try:
+        validate_source_ref("v1.2.1", stable)
+    except ReleaseGateError as error:
+        assert "source ref must match release tag" in str(error)
+    else:
+        raise AssertionError("mismatched release source ref was accepted")
+
     validate_release_progression(
         parse_tag("v1.2.0-alpha.2"),
         "alpha",
@@ -263,6 +303,7 @@ def main() -> int:
     parser.add_argument("--main-ref", default="origin/main")
     parser.add_argument("--preflight", action="store_true")
     parser.add_argument("--target-ref")
+    parser.add_argument("--source-ref")
     parser.add_argument("--changelog", type=Path, default=Path("CHANGELOG.md"))
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
@@ -275,14 +316,24 @@ def main() -> int:
         parser.error("--tag is required unless --self-test is used")
 
     try:
-        metadata = validate_changelog_for_tag(args.changelog, args.tag)
         version = validate_release(
             args.tag,
             args.main_ref,
             preflight=args.preflight,
             target_ref=args.target_ref,
         )
-        validate_release_version(Path.cwd(), version)
+        if args.source_ref:
+            validate_source_ref(args.source_ref, version)
+            with tempfile.TemporaryDirectory() as temp:
+                source_root = Path(temp)
+                materialize_release_source(args.source_ref, source_root)
+                metadata = validate_changelog_for_tag(
+                    source_root / "CHANGELOG.md", args.tag
+                )
+                validate_release_version(source_root, version)
+        else:
+            metadata = validate_changelog_for_tag(args.changelog, args.tag)
+            validate_release_version(Path.cwd(), version)
         if not args.preflight:
             validate_tag_annotation(version.tag, metadata)
     except (ReleaseGateError, ReleaseMetadataError, ValueError) as error:
