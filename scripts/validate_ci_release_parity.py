@@ -265,6 +265,16 @@ def validate_parity(ci: dict[str, Any], release: dict[str, Any]) -> None:
         ),
         "Release/release",
     )
+    for token in (
+        "FINAL_RELEASE_STATE",
+        "--require-complete",
+        "Published release attestation passed.",
+    ):
+        if token not in publication_text:
+            raise ParityError(
+                "Release workflow must attest published state after mutation: "
+                f"missing {token}"
+            )
 
     missing_release_needs = RELEASE_REQUIRED_NEEDS - normalized_needs(
         release_job, "Release/release"
@@ -354,7 +364,12 @@ def fixture_workflows() -> tuple[dict[str, Any], dict[str, Any]]:
                     "python3 scripts/validate_existing_release_assets.py "
                     "--release-json existing.json --asset-dir release-artifacts "
                     "--write-missing missing.txt\n"
-                    "MISSING_RELEASE_FILES=()"
+                    "MISSING_RELEASE_FILES=()\n"
+                    "FINAL_RELEASE_STATE=existing\n"
+                    "python3 scripts/validate_existing_release_assets.py "
+                    "--release-json final.json --asset-dir release-artifacts "
+                    "--write-missing final-missing.txt --require-complete\n"
+                    "echo 'Published release attestation passed.'"
                 ),
             },
         ],
@@ -435,6 +450,24 @@ def run_self_test() -> None:
             raise AssertionError("ambiguous existence probe failure was not attributed correctly") from error
     else:
         raise AssertionError("ambiguous release existence probe must fail parity validation")
+
+    broken_ci, broken_release = fixture_workflows()
+    create_step = next(
+        step
+        for step in broken_release["jobs"]["release"]["steps"]
+        if step.get("name") == "Create GitHub release"
+    )
+    create_step["run"] = create_step["run"].replace(
+        "FINAL_RELEASE_STATE=existing",
+        "FINAL_STATE_REMOVED=existing",
+    )
+    try:
+        validate_parity(broken_ci, broken_release)
+    except ParityError as error:
+        if "must attest published state after mutation" not in str(error):
+            raise AssertionError("publication attestation failure was not attributed correctly") from error
+    else:
+        raise AssertionError("missing publication attestation must fail parity validation")
 
 
 def main() -> int:

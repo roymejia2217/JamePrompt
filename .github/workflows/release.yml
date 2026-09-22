@@ -525,3 +525,30 @@ jobs:
             echo "Unexpected release probe state: $RELEASE_STATE" >&2
             exit 1
           fi
+
+          FINAL_RELEASE_JSON="$RUNNER_TEMP/final-release.json"
+          FINAL_RELEASE_STATE_FILE="$RUNNER_TEMP/final-release-state.txt"
+          python3 scripts/probe_github_release.py \
+            --repository "${{ github.repository }}" \
+            --tag "$TAG_NAME" \
+            --write-status "$FINAL_RELEASE_STATE_FILE" \
+            --write-json "$FINAL_RELEASE_JSON"
+          FINAL_RELEASE_STATE="$(cat "$FINAL_RELEASE_STATE_FILE")"
+          if [ "$FINAL_RELEASE_STATE" != "existing" ]; then
+            echo "Post-publication release attestation failed: expected existing, got $FINAL_RELEASE_STATE" >&2
+            exit 1
+          fi
+
+          python3 scripts/validate_release_metadata.py \
+            --tag "$TAG_NAME" \
+            --changelog CHANGELOG.md \
+            --existing-release-json "$FINAL_RELEASE_JSON"
+
+          FINAL_MISSING_RELEASE_FILES_PATH="$RUNNER_TEMP/final-missing-release-files.txt"
+          python3 scripts/validate_existing_release_assets.py \
+            --release-json "$FINAL_RELEASE_JSON" \
+            --asset-dir release-artifacts \
+            --write-missing "$FINAL_MISSING_RELEASE_FILES_PATH" \
+            --require-complete
+
+          echo "Published release attestation passed."
