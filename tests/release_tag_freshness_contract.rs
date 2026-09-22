@@ -31,18 +31,18 @@ fn release_tag_creation_reconciles_remote_state_again_after_long_running_gates()
     let change_gate = tagger
         .find("scripts/verify_change_gate.sh")
         .expect("release tagger must retain local change gate");
-    let final_fetch = tagger
-        .rfind("git fetch origin main --tags")
-        .expect("release tagger must re-fetch remote state after local gates");
     let preflight = tagger
         .find("python3 scripts/validate_release_gate.py")
         .expect("release tagger must retain release preflight");
+    let preflight_fetch = tagger[..preflight]
+        .rfind("git fetch origin main --tags")
+        .expect("release tagger must re-fetch remote state after local gates");
     let tag = tagger
         .find("git tag -a")
         .expect("release tagger must create annotated tag");
 
     assert!(
-        change_gate < final_fetch && final_fetch < preflight && preflight < tag,
+        change_gate < preflight_fetch && preflight_fetch < preflight && preflight < tag,
         "remote state must be re-fetched after local gates and before preflight/tag creation"
     );
 }
