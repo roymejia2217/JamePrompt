@@ -34,7 +34,7 @@ branch="$(git branch --show-current)"
   exit 2
 }
 
-printf '%s\n' "$title" | npm exec --no -- commitlint --verbose
+printf '%s\n' "$title" | npm exec --no -- commitlint --config commitlint.title.config.cjs --verbose
 python3 scripts/validate_pr_description.py --body-file "$body_file"
 scripts/verify_change_gate.sh
 

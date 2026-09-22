@@ -456,6 +456,12 @@ jobs:
             exit 1
           fi
 
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          python3 scripts/validate_release_metadata.py \
+            --tag "$TAG_NAME" \
+            --changelog CHANGELOG.md \
+            --write-notes "$NOTES_FILE"
+
           python3 scripts/stage_release_assets.py \
             --tag "$TAG_NAME" \
             release-artifacts \
@@ -476,16 +482,19 @@ jobs:
           RELEASE_FILES+=("release-artifacts/SHA256SUMS")
 
           PRERELEASE_ARGS=()
-          NOTES="Automated release for $TAG_NAME"
           if [[ "$TAG_NAME" == *-* ]]; then
             PRERELEASE_ARGS+=(--prerelease)
-            printf -v NOTES '%s\n\n%s\n\n%s' \
-              'JamePrompt prerelease validation build.' \
-              'Validated platform paths include Linux Wayland portal hotkeys and permissioned auto-paste, Linux X11 native hotkeys and auto-paste, and Windows native hotkeys and auto-paste.' \
-              'This prerelease is intended for validation before promotion to a stable release.'
           fi
 
-          if gh release view "$TAG_NAME" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+          EXISTING_RELEASE_JSON="$RUNNER_TEMP/existing-release.json"
+          if gh release view "$TAG_NAME" \
+            --repo "${{ github.repository }}" \
+            --json tagName,name,body,isPrerelease \
+            > "$EXISTING_RELEASE_JSON" 2>/dev/null; then
+            python3 scripts/validate_release_metadata.py \
+              --tag "$TAG_NAME" \
+              --changelog CHANGELOG.md \
+              --existing-release-json "$EXISTING_RELEASE_JSON"
             gh release upload "$TAG_NAME" "${RELEASE_FILES[@]}" \
               --repo "${{ github.repository }}" \
               --clobber
@@ -494,6 +503,6 @@ jobs:
               --repo "${{ github.repository }}" \
               --verify-tag \
               --title "$TAG_NAME" \
-              --notes "$NOTES" \
+              --notes-file "$NOTES_FILE" \
               "${PRERELEASE_ARGS[@]}"
           fi

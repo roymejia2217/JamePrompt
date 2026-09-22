@@ -119,18 +119,33 @@ fn windows_release_job_smokes_release_binary_before_packaging() {
 }
 
 #[test]
-fn prerelease_notes_describe_current_multiplatform_validation_scope() {
+fn release_notes_are_rendered_from_validated_changelog_metadata() {
     let workflow = read_release_workflow();
 
-    assert!(
-        !workflow.contains("Wayland support release candidate."),
-        "Prerelease notes must not describe every future prerelease as Wayland-only"
-    );
-    for required in ["Linux Wayland", "Linux X11", "Windows", "prerelease"] {
+    for required in [
+        "python3 scripts/validate_release_metadata.py",
+        "--changelog CHANGELOG.md",
+        "--write-notes \"$NOTES_FILE\"",
+        "--notes-file \"$NOTES_FILE\"",
+        "--json tagName,name,body,isPrerelease",
+        "--existing-release-json \"$EXISTING_RELEASE_JSON\"",
+    ] {
         assert!(
             workflow.contains(required),
-            "Prerelease notes must include current validation scope: {}",
+            "release workflow must use validated changelog metadata: {}",
             required
+        );
+    }
+
+    for forbidden in [
+        "NOTES=\"Automated release for $TAG_NAME\"",
+        "printf -v NOTES",
+        "Wayland support release candidate.",
+    ] {
+        assert!(
+            !workflow.contains(forbidden),
+            "release notes must not return to inline ad-hoc metadata: {}",
+            forbidden
         );
     }
 }

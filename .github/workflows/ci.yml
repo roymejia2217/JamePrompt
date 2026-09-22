@@ -34,6 +34,9 @@ jobs:
       - name: Install commit validation dependencies
         run: npm ci
 
+      - name: Self-test commit message contract
+        run: bash scripts/test-commitlint.sh
+
       - name: Validate pull request commits
         run: npm exec --no -- commitlint --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" --verbose
 
@@ -79,6 +82,9 @@ jobs:
 
       - name: Validate release gate contract
         run: python3 scripts/validate_release_gate.py --self-test
+
+      - name: Validate release metadata contract
+        run: python3 scripts/validate_release_metadata.py --self-test
 
       - name: Validate pull request description contract
         run: python3 scripts/validate_pr_description.py --self-test

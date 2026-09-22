@@ -8,7 +8,8 @@
     "test:commitlint": "bash scripts/test-commitlint.sh",
     "test:pr-governance": "python3 scripts/validate_pr_description.py --self-test",
     "test:release-gate": "python3 scripts/validate_release_gate.py --self-test",
-    "verify:change": "bash scripts/verify_change_gate.sh"
+    "verify:change": "bash scripts/verify_change_gate.sh",
+    "test:release-metadata": "python3 scripts/validate_release_metadata.py --self-test"
   },
   "devDependencies": {
     "@commitlint/cli": "21.2.2",

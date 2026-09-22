@@ -10,7 +10,14 @@ import tempfile
 from pathlib import Path
 
 
-REQUIRED_HEADINGS = ("Summary", "Verification", "Release impact")
+REQUIRED_HEADINGS = (
+    "Summary",
+    "Motivation",
+    "Changes",
+    "Verification",
+    "Risk and rollback",
+    "Release impact",
+)
 HEADING_PATTERN = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 COMMENT_PATTERN = re.compile(r"<!--.*?-->", re.DOTALL)
 PLACEHOLDER_PATTERN = re.compile(r"(?:todo|tbd|n/?a|[-–—])", re.IGNORECASE)
@@ -22,16 +29,35 @@ class DescriptionError(ValueError):
 
 def sections(body: str) -> dict[str, str]:
     matches = list(HEADING_PATTERN.finditer(body))
-    found: dict[str, str] = {}
+    headings = [match.group(1).strip() for match in matches]
 
+    unexpected = [heading for heading in headings if heading not in REQUIRED_HEADINGS]
+    if unexpected:
+        raise DescriptionError(
+            f"unexpected level-2 section(s): {', '.join(unexpected)}"
+        )
+
+    duplicates = [
+        heading
+        for heading in REQUIRED_HEADINGS
+        if headings.count(heading) > 1
+    ]
+    if duplicates:
+        raise DescriptionError(
+            f"duplicate required section(s): {', '.join(duplicates)}"
+        )
+
+    missing = [heading for heading in REQUIRED_HEADINGS if heading not in headings]
+    if missing:
+        raise DescriptionError(f"missing required section(s): {', '.join(missing)}")
+
+    if tuple(headings) != REQUIRED_HEADINGS:
+        raise DescriptionError("required sections are out of order")
+
+    found: dict[str, str] = {}
     for index, match in enumerate(matches):
-        heading = match.group(1).strip()
-        if heading not in REQUIRED_HEADINGS:
-            continue
-        if heading in found:
-            raise DescriptionError(f"duplicate required section: {heading}")
         end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
-        found[heading] = body[match.end() : end]
+        found[headings[index]] = body[match.end() : end]
 
     return found
 
@@ -42,16 +68,14 @@ def normalized_content(value: str) -> str:
 
 def validate_description(body: str) -> None:
     found = sections(body)
-    missing = [heading for heading in REQUIRED_HEADINGS if heading not in found]
-    if missing:
-        raise DescriptionError(f"missing required section(s): {', '.join(missing)}")
-
-    for heading, value in found.items():
-        content = normalized_content(value)
+    for heading in REQUIRED_HEADINGS:
+        content = normalized_content(found[heading])
         if not content:
             raise DescriptionError(f"required section is empty: {heading}")
-        if heading != "Release impact" and PLACEHOLDER_PATTERN.fullmatch(content):
-            raise DescriptionError(f"required section contains only a placeholder: {heading}")
+        if PLACEHOLDER_PATTERN.fullmatch(content):
+            raise DescriptionError(
+                f"required section contains only a placeholder: {heading}"
+            )
 
 
 def self_test() -> None:
@@ -59,31 +83,64 @@ def self_test() -> None:
 
 Modernize the editor behavior.
 
+## Motivation
+
+The existing behavior can lose focus during prompt edits.
+
+## Changes
+
+- Preserve focus while applying the editor update.
+
 ## Verification
 
 - `cargo test --locked --all-targets`
 
+## Risk and rollback
+
+Low risk. Revert the focused editor commit if regression evidence appears.
+
 ## Release impact
 
-Beta candidate only.
+Beta candidate.
 """
     validate_description(valid)
 
-    for invalid, expected in (
+    invalid_cases = [
         ("## Summary\n\nPresent", "missing required section"),
         (
-            "## Summary\n\n<!-- fill this -->\n\n## Verification\n\n`cargo test`\n\n## Release impact\n\nNone",
+            valid.replace("Modernize the editor behavior.", "<!-- fill this -->"),
             "required section is empty: Summary",
         ),
         (
-            "## Summary\n\nDone\n\n## Verification\n\nTBD\n\n## Release impact\n\nNone",
+            valid.replace("- `cargo test --locked --all-targets`", "TBD"),
             "placeholder: Verification",
         ),
         (
-            "## Summary\n\nOne\n\n## Summary\n\nTwo\n\n## Verification\n\n`cargo test`\n\n## Release impact\n\nNone",
+            valid.replace(
+                "## Motivation\n\nThe existing behavior can lose focus during prompt edits.\n\n"
+                "## Changes\n\n- Preserve focus while applying the editor update.",
+                "## Changes\n\n- Preserve focus while applying the editor update.\n\n"
+                "## Motivation\n\nThe existing behavior can lose focus during prompt edits.",
+            ),
+            "required sections are out of order",
+        ),
+        (
+            valid.replace(
+                "## Motivation",
+                "## Unreviewed\n\nSomething.\n\n## Motivation",
+            ),
+            "unexpected level-2 section",
+        ),
+        (
+            valid.replace(
+                "## Verification",
+                "## Summary\n\nDuplicate.\n\n## Verification",
+            ),
             "duplicate required section",
         ),
-    ):
+    ]
+
+    for invalid, expected in invalid_cases:
         try:
             validate_description(invalid)
         except DescriptionError as error:

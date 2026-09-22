@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$#" -ne 1 ]; then
-  echo "usage: $0 vMAJOR.MINOR.PATCH[-beta.N]" >&2
+  echo "usage: $0 vMAJOR.MINOR.PATCH[-alpha.N|-beta.N]" >&2
   exit 64
 fi
 
@@ -29,6 +29,7 @@ git diff --cached --quiet
 git fetch origin main --tags
 assert_release_state_current
 
+python3 scripts/validate_release_metadata.py --tag "$tag" --changelog CHANGELOG.md
 python3 scripts/validate_main_ci_evidence.py --sha "$head_commit"
 scripts/verify_change_gate.sh
 

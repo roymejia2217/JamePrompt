@@ -148,6 +148,14 @@ def self_test() -> None:
     assert stable.rpm_release == "1"
     assert not stable.is_prerelease
 
+    alpha = parse_tag("v1.2.0-alpha.1")
+    assert alpha.canonical == "1.2.0-alpha.1"
+    assert alpha.debian == "1.2.0~alpha.1"
+    assert alpha.arch == "1.2.0alpha.1"
+    assert alpha.rpm_version == "1.2.0"
+    assert alpha.rpm_release == "0.1.alpha.1"
+    assert alpha.is_prerelease
+
     beta = parse_tag("release-candidate/v1.2.0-beta.1")
     assert beta.canonical == "1.2.0-beta.1"
     assert beta.debian == "1.2.0~beta.1"
@@ -191,6 +199,14 @@ def self_test() -> None:
             "Name: jame-prompt\nVersion: 1.1.0\nRelease: 1%{?dist}\n",
             encoding="utf-8",
         )
+        apply_release_version(root, alpha)
+        assert 'version = "1.2.0-alpha.1"' in (root / "Cargo.toml").read_text()
+        assert 'version = "1.2.0-alpha.1"' in (root / "Cargo.lock").read_text()
+        assert "pkgver=1.2.0alpha.1" in (root / "packaging/arch/PKGBUILD").read_text()
+        rpm = (root / "packaging/rpm/jame-prompt.spec").read_text()
+        assert "Version:        1.2.0" in rpm
+        assert "Release:        0.1.alpha.1%{?dist}" in rpm
+
         apply_release_version(root, beta)
         assert 'version = "1.2.0-beta.1"' in (root / "Cargo.toml").read_text()
         assert 'version = "1.2.0-beta.1"' in (root / "Cargo.lock").read_text()

@@ -4,28 +4,20 @@
 from __future__ import annotations
 
 import argparse
-import re
 import subprocess
 import sys
+from pathlib import Path
 
 from prepare_release_version import ReleaseVersion, parse_tag
-
-
-BETA_PATTERN = re.compile(r"beta\.(0|[1-9]\d*)$")
+from validate_release_metadata import (
+    ReleaseMetadataError,
+    release_kind,
+    validate_changelog_for_tag,
+)
 
 
 class ReleaseGateError(ValueError):
     """Raised when a release does not satisfy the repository release contract."""
-
-
-def release_kind(version: ReleaseVersion) -> str:
-    if version.prerelease is None:
-        return "stable"
-    if BETA_PATTERN.fullmatch(version.prerelease):
-        return "beta"
-    raise ReleaseGateError(
-        "release prerelease identifiers must use the SemVer beta.N form"
-    )
 
 
 def run_git(*args: str) -> str:
@@ -38,8 +30,8 @@ def run_git(*args: str) -> str:
     return result.stdout.strip()
 
 
-def beta_numbers_for(version: ReleaseVersion) -> list[int]:
-    prefix = f"v{version.base}-beta."
+def prerelease_numbers_for(version: ReleaseVersion, kind: str) -> list[int]:
+    prefix = f"v{version.base}-{kind}."
     numbers: list[int] = []
     for tag in run_git("tag", "--list", f"{prefix}*").splitlines():
         suffix = tag.removeprefix(prefix)
@@ -73,39 +65,52 @@ def validate_release(
         ["git", "merge-base", "--is-ancestor", target, main_commit], check=False
     )
     if ancestry.returncode != 0:
-        raise ReleaseGateError("release target must be reachable from the protected main branch")
+        raise ReleaseGateError(
+            "release target must be reachable from the protected main branch"
+        )
 
-    beta_numbers = beta_numbers_for(version)
-    if kind == "beta":
+    if kind in {"alpha", "beta"}:
         assert version.prerelease is not None
-        number = int(version.prerelease.removeprefix("beta."))
-        if any(existing > number for existing in beta_numbers):
-            raise ReleaseGateError("beta number must not be older than an existing beta")
-    elif not beta_numbers:
-        raise ReleaseGateError("a stable release requires an existing beta for the same version")
+        number = int(version.prerelease.removeprefix(f"{kind}."))
+        existing_numbers = prerelease_numbers_for(version, kind)
+        if any(existing > number for existing in existing_numbers):
+            raise ReleaseGateError(
+                f"{kind} number must not be older than an existing {kind}"
+            )
+    else:
+        beta_numbers = prerelease_numbers_for(version, "beta")
+        if not beta_numbers:
+            raise ReleaseGateError(
+                "a stable release requires an existing beta for the same version"
+            )
 
     return version
 
 
 def self_test() -> None:
     assert release_kind(parse_tag("v1.2.0")) == "stable"
+    assert release_kind(parse_tag("v1.2.0-alpha.1")) == "alpha"
     assert release_kind(parse_tag("v1.2.0-beta.9")) == "beta"
     try:
         release_kind(parse_tag("v1.2.0-rc.1"))
-    except ReleaseGateError:
+    except ReleaseMetadataError:
         pass
     else:
-        raise AssertionError("non-beta prerelease accepted")
+        raise AssertionError("unsupported prerelease accepted")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Validate JamePrompt beta and stable release tags."
+        description="Validate JamePrompt alpha, beta, and stable release tags."
     )
-    parser.add_argument("--tag", help="Release tag, for example v1.2.0-beta.9")
+    parser.add_argument(
+        "--tag",
+        help="Release tag, for example v1.2.0-alpha.1, v1.2.0-beta.9, or v1.2.0",
+    )
     parser.add_argument("--main-ref", default="origin/main")
     parser.add_argument("--preflight", action="store_true")
     parser.add_argument("--target-ref")
+    parser.add_argument("--changelog", type=Path, default=Path("CHANGELOG.md"))
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
 
@@ -117,13 +122,14 @@ def main() -> int:
         parser.error("--tag is required unless --self-test is used")
 
     try:
+        validate_changelog_for_tag(args.changelog, args.tag)
         version = validate_release(
             args.tag,
             args.main_ref,
             preflight=args.preflight,
             target_ref=args.target_ref,
         )
-    except ReleaseGateError as error:
+    except (ReleaseGateError, ReleaseMetadataError, ValueError) as error:
         print(f"release gate error: {error}", file=sys.stderr)
         return 2
 
