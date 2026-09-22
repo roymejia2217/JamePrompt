@@ -10,8 +10,10 @@ from pathlib import Path
 
 from prepare_release_version import ReleaseVersion, parse_tag
 from validate_release_metadata import (
+    ReleaseMetadata,
     ReleaseMetadataError,
     release_kind,
+    render_tag_message,
     validate_changelog_for_tag,
 )
 
@@ -28,6 +30,19 @@ def run_git(*args: str) -> str:
         message = result.stderr.strip() or result.stdout.strip()
         raise ReleaseGateError(f"git {' '.join(args)} failed: {message}")
     return result.stdout.strip()
+
+
+TAG_CONTENT_COMMAND = "git for-each-ref"
+
+
+def validate_tag_annotation(tag: str, metadata: ReleaseMetadata) -> None:
+    ref = f"refs/tags/{tag}"
+    contents = run_git("for-each-ref", "--format=%(contents)", ref)
+    expected = render_tag_message(metadata).strip()
+    if contents.strip() != expected:
+        raise ReleaseGateError(
+            "annotated tag message does not match release metadata"
+        )
 
 
 def prerelease_numbers_for(version: ReleaseVersion, kind: str) -> list[int]:
@@ -122,13 +137,15 @@ def main() -> int:
         parser.error("--tag is required unless --self-test is used")
 
     try:
-        validate_changelog_for_tag(args.changelog, args.tag)
+        metadata = validate_changelog_for_tag(args.changelog, args.tag)
         version = validate_release(
             args.tag,
             args.main_ref,
             preflight=args.preflight,
             target_ref=args.target_ref,
         )
+        if not args.preflight:
+            validate_tag_annotation(version.tag, metadata)
     except (ReleaseGateError, ReleaseMetadataError, ValueError) as error:
         print(f"release gate error: {error}", file=sys.stderr)
         return 2
