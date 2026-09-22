@@ -338,7 +338,12 @@ def run_self_test() -> None:
 
     broken_ci, broken_release = fixture_workflows()
     rpm_steps = broken_release["jobs"]["rpm"]["steps"]
-    rpm_steps[0]["run"] = rpm_steps[0]["run"].replace(
+    rpm_validator_step = next(
+        step
+        for step in rpm_steps
+        if "scripts/validate_rpm_package.sh" in str(step.get("run", ""))
+    )
+    rpm_validator_step["run"] = rpm_validator_step["run"].replace(
         "scripts/validate_rpm_package.sh", "missing-rpm-validator"
     )
     try:
