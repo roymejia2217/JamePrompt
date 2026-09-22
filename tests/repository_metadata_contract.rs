@@ -156,8 +156,8 @@ fn release_metadata_uses_semver_and_keep_a_changelog_as_executable_contracts() {
         "validate_release_metadata.py",
         "--write-notes",
         "--notes-file",
-        "gh release view",
-        "--json tagName,name,body,isPrerelease",
+        "python3 scripts/probe_github_release.py",
+        "--write-json \"$EXISTING_RELEASE_JSON\"",
         "--existing-release-json",
         "--title \"$TAG_NAME\"",
     ] {
