@@ -401,10 +401,22 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout release tooling
+      - name: Checkout trusted release tooling
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify trusted release tooling identity
+        env:
+          EXPECTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          ACTUAL_TOOLING_SHA="$(git rev-parse HEAD)"
+          if [ "$ACTUAL_TOOLING_SHA" != "$EXPECTED_WORKFLOW_SHA" ]; then
+            echo "Trusted release tooling identity mismatch: expected $EXPECTED_WORKFLOW_SHA, got $ACTUAL_TOOLING_SHA" >&2
+            exit 1
+          fi
 
       - name: Download artifacts from current run
         if: ${{ inputs.publish_run_id == '' }}
@@ -446,6 +458,12 @@ jobs:
             exit 1
           fi
 
+          TAG_CHANGELOG_FILE="$RUNNER_TEMP/release-changelog.md"
+          if ! git show "${TAG_NAME}:CHANGELOG.md" > "$TAG_CHANGELOG_FILE"; then
+            echo "Unable to read CHANGELOG.md from release tag: $TAG_NAME" >&2
+            exit 1
+          fi
+
           EXPECTED_TARGET="$(git rev-parse "$TAG_NAME^{commit}")"
           if ! REMOTE_TARGET="$(git ls-remote --exit-code origin "refs/tags/$TAG_NAME^{}" | awk 'NR == 1 { print $1 }')"; then
             echo "Remote release tag target mismatch: expected $EXPECTED_TARGET, got missing" >&2
@@ -459,7 +477,7 @@ jobs:
           NOTES_FILE="$RUNNER_TEMP/release-notes.md"
           python3 scripts/validate_release_metadata.py \
             --tag "$TAG_NAME" \
-            --changelog CHANGELOG.md \
+            --changelog "$TAG_CHANGELOG_FILE" \
             --write-notes "$NOTES_FILE"
 
           python3 scripts/stage_release_assets.py \
@@ -498,7 +516,7 @@ jobs:
           if [ "$RELEASE_STATE" = "existing" ]; then
             python3 scripts/validate_release_metadata.py \
               --tag "$TAG_NAME" \
-              --changelog CHANGELOG.md \
+              --changelog "$TAG_CHANGELOG_FILE" \
               --existing-release-json "$EXISTING_RELEASE_JSON"
 
             MISSING_RELEASE_FILES_PATH="$RUNNER_TEMP/missing-release-files.txt"
@@ -541,7 +559,7 @@ jobs:
 
           python3 scripts/validate_release_metadata.py \
             --tag "$TAG_NAME" \
-            --changelog CHANGELOG.md \
+            --changelog "$TAG_CHANGELOG_FILE" \
             --existing-release-json "$FINAL_RELEASE_JSON"
 
           FINAL_MISSING_RELEASE_FILES_PATH="$RUNNER_TEMP/final-missing-release-files.txt"

@@ -126,6 +126,7 @@ RELEASE_REQUIRED_NEEDS = {
     "appimage",
     "windows",
 }
+UNSAFE_RELEASE_REF_CHECKOUT = "ref: ${{ env.RELEASE_REF }}"
 
 
 def load_workflow(path: Path) -> dict[str, Any]:
@@ -165,6 +166,22 @@ def flatten_strings(value: Any) -> list[str]:
 
 def job_text(job: dict[str, Any]) -> str:
     return "\n".join(flatten_strings(job))
+
+
+def step_by_name(job: dict[str, Any], name: str, source: str) -> dict[str, Any]:
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        raise ParityError(f"{source}: job has no steps list")
+    matches = [
+        step
+        for step in steps
+        if isinstance(step, dict) and step.get("name") == name
+    ]
+    if len(matches) != 1:
+        raise ParityError(
+            f"{source}: step '{name}' must appear exactly once, found {len(matches)}"
+        )
+    return matches[0]
 
 
 def step_names(job: dict[str, Any], source: str) -> list[str]:
@@ -248,7 +265,44 @@ def validate_parity(ci: dict[str, Any], release: dict[str, Any]) -> None:
         )
 
     release_job = get_job(release, "release", "Release/release")
+    trusted_checkout = step_by_name(
+        release_job,
+        "Checkout trusted release tooling",
+        "Release/release",
+    )
+    checkout_with = trusted_checkout.get("with")
+    if not isinstance(checkout_with, dict):
+        raise ParityError(
+            "Release/release: write-capable tooling must use workflow identity"
+        )
+    if checkout_with.get("ref") != "${{ github.workflow_sha }}":
+        raise ParityError(
+            "Release/release: write-capable tooling must use workflow identity"
+        )
+    if checkout_with.get("fetch-depth") != 0:
+        raise ParityError(
+            "Release/release: trusted checkout requires fetch-depth: 0"
+        )
+    if checkout_with.get("persist-credentials") is not False:
+        raise ParityError(
+            "Release/release: trusted checkout requires persist-credentials: false"
+        )
+
     publication_text = job_text(release_job)
+    if "${{ env.RELEASE_REF }}" in str(checkout_with.get("ref", "")):
+        raise ParityError(
+            f"Release/release: write-capable tooling must use workflow identity; "
+            f"forbidden={UNSAFE_RELEASE_REF_CHECKOUT}"
+        )
+    require_tokens(
+        publication_text,
+        (
+            "TAG_CHANGELOG_FILE",
+            'git show "${TAG_NAME}:CHANGELOG.md"',
+            '--changelog "$TAG_CHANGELOG_FILE"',
+        ),
+        "Release/release",
+    )
     if "--clobber" in publication_text:
         raise ParityError("Release workflow must not clobber published assets")
     if "gh release view" in publication_text or "2>/dev/null" in publication_text:
@@ -294,7 +348,8 @@ def validate_parity(ci: dict[str, Any], release: dict[str, Any]) -> None:
     require_order(
         release_step_names,
         (
-            "Checkout release tooling",
+            "Checkout trusted release tooling",
+            "Verify trusted release tooling identity",
             "Validate reusable release run provenance",
             "Download artifacts from existing run",
             "Create GitHub release",
@@ -348,7 +403,22 @@ def fixture_workflows() -> tuple[dict[str, Any], dict[str, Any]]:
             for job_name in ("deb", "arch", "rpm", "appimage", "windows")
         ),
         "steps": [
-            {"name": "Checkout release tooling", "run": "true"},
+            {
+                "name": "Checkout trusted release tooling",
+                "uses": "actions/checkout@pinned",
+                "with": {
+                    "ref": "${{ github.workflow_sha }}",
+                    "fetch-depth": 0,
+                    "persist-credentials": False,
+                },
+            },
+            {
+                "name": "Verify trusted release tooling identity",
+                "run": (
+                    "EXPECTED_WORKFLOW_SHA=${{ github.workflow_sha }}\n"
+                    "echo 'Trusted release tooling identity mismatch' >/dev/null"
+                ),
+            },
             {
                 "name": "Validate reusable release run provenance",
                 "run": "python3 scripts/validate_reusable_release_run.py",
@@ -357,6 +427,10 @@ def fixture_workflows() -> tuple[dict[str, Any], dict[str, Any]]:
             {
                 "name": "Create GitHub release",
                 "run": (
+                    "TAG_CHANGELOG_FILE=release-changelog.md\n"
+                    "git show \"${TAG_NAME}:CHANGELOG.md\" > \"$TAG_CHANGELOG_FILE\"\n"
+                    "python3 scripts/validate_release_metadata.py "
+                    "--changelog \"$TAG_CHANGELOG_FILE\"\n"
                     "python3 scripts/probe_github_release.py "
                     "--repository owner/repo --tag v1.2.3 "
                     "--write-status release-state.txt --write-json existing.json\n"
@@ -468,6 +542,26 @@ def run_self_test() -> None:
             raise AssertionError("publication attestation failure was not attributed correctly") from error
     else:
         raise AssertionError("missing publication attestation must fail parity validation")
+
+
+    broken_ci, broken_release = fixture_workflows()
+    checkout_step = step_by_name(
+        broken_release["jobs"]["release"],
+        "Checkout trusted release tooling",
+        "Release/release",
+    )
+    checkout_step["with"]["ref"] = "${{ env.RELEASE_REF }}"
+    try:
+        validate_parity(broken_ci, broken_release)
+    except ParityError as error:
+        if "write-capable tooling must use workflow identity" not in str(error):
+            raise AssertionError(
+                "trusted tooling boundary failure was not attributed correctly"
+            ) from error
+    else:
+        raise AssertionError(
+            "release-ref checkout in write-capable publication job must fail parity validation"
+        )
 
 
 def main() -> int:
