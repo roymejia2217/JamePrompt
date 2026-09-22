@@ -86,6 +86,11 @@ scripts/open_pull_request.sh \
   --body-file path/to/pull-request.md
 ```
 
+The helper creates a draft pull request when none exists and reports an existing open PR
+without changing its readiness state. It does not enable auto-merge and never performs a
+merge. Promotion from draft and the final rebase merge require fresh required checks plus
+explicit reconciliation of the exact head SHA against the reviewed pull request.
+
 ## Release metadata
 
 `CHANGELOG.md` is the source of truth for GitHub Release titles and bodies. It retains an
