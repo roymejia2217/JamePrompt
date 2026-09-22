@@ -75,7 +75,6 @@ fn release_state_invariant_fails_closed_on_advanced_main_or_existing_tag() {
     }
 }
 
-
 #[test]
 fn release_tag_push_reconciles_remote_state_after_local_tag_validation() {
     let tagger = read_file("scripts/create_release_tag.sh");
@@ -125,7 +124,6 @@ fn release_tag_push_reconciles_remote_state_after_local_tag_validation() {
     );
 }
 
-
 #[test]
 fn remote_tag_absence_probe_fails_closed_on_query_errors() {
     let tagger = read_file("scripts/create_release_tag.sh");
@@ -144,9 +142,7 @@ fn remote_tag_absence_probe_fails_closed_on_query_errors() {
     }
 
     assert!(
-        !tagger.contains(
-            "git ls-remote --exit-code origin \"refs/tags/$tag\" >/dev/null || true"
-        ),
+        !tagger.contains("git ls-remote --exit-code origin \"refs/tags/$tag\" >/dev/null || true"),
         "remote tag lookup errors must never be suppressed"
     );
 }
