@@ -19,7 +19,7 @@ fn release_publication_binds_to_existing_remote_annotated_tag_target() {
         "EXPECTED_TARGET=\"$(git rev-parse \"$TAG_NAME^{commit}\")\"",
         "git ls-remote --exit-code origin \"refs/tags/$TAG_NAME^{}\"",
         "REMOTE_TARGET=",
-        "[ \"$REMOTE_TARGET\" = \"$EXPECTED_TARGET\" ]",
+        "if [ \"$REMOTE_TARGET\" != \"$EXPECTED_TARGET\" ]; then",
         "Remote release tag target mismatch",
         "--verify-tag",
     ] {
