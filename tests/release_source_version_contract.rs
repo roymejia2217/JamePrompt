@@ -38,10 +38,7 @@ fn tag_creation_and_release_gate_require_committed_version_state() {
     let tagger = read_file("scripts/create_release_tag.sh");
     let gate = read_file("scripts/validate_release_gate.py");
 
-    for required in [
-        "scripts/prepare_release_version.py",
-        "--check",
-    ] {
+    for required in ["scripts/prepare_release_version.py", "--check"] {
         assert!(
             tagger.contains(required),
             "tag creation must verify committed release version state: {}",
@@ -53,10 +50,7 @@ fn tag_creation_and_release_gate_require_committed_version_state() {
         "tag creation must never mutate package versions"
     );
 
-    for required in [
-        "validate_release_version",
-        "Path.cwd()",
-    ] {
+    for required in ["validate_release_version", "Path.cwd()"] {
         assert!(
             gate.contains(required),
             "release gate must verify source version state: {}",
@@ -70,7 +64,10 @@ fn tag_creation_and_release_gate_require_committed_version_state() {
     let tag = tagger
         .find("git tag -a")
         .expect("tagger must retain annotated tag creation");
-    assert!(check < tag, "source version check must run before tag creation");
+    assert!(
+        check < tag,
+        "source version check must run before tag creation"
+    );
 }
 
 #[test]
