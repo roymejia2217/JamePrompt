@@ -163,6 +163,7 @@ def validate_existing_release(payload: dict[str, Any], metadata: ReleaseMetadata
     expected = {
         "tagName": metadata.tag,
         "name": metadata.title,
+        "isDraft": False,
         "isPrerelease": metadata.is_prerelease,
     }
     for key, value in expected.items():
@@ -262,9 +263,19 @@ def self_test() -> None:
                 "tagName": tag,
                 "name": tag,
                 "body": metadata.notes,
+                "isDraft": False,
                 "isPrerelease": metadata.is_prerelease,
             }
             validate_existing_release(payload, metadata)
+
+            draft_payload = dict(payload)
+            draft_payload["isDraft"] = True
+            try:
+                validate_existing_release(draft_payload, metadata)
+            except ReleaseMetadataError:
+                pass
+            else:
+                raise AssertionError("draft GitHub Release metadata was accepted")
             tag_message = render_tag_message(metadata)
             assert tag_message.startswith(f"{tag}\n\n")
             assert tag_message.endswith(metadata.notes)

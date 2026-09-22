@@ -251,9 +251,18 @@ def validate_parity(ci: dict[str, Any], release: dict[str, Any]) -> None:
     publication_text = job_text(release_job)
     if "--clobber" in publication_text:
         raise ParityError("Release workflow must not clobber published assets")
+    if "gh release view" in publication_text or "2>/dev/null" in publication_text:
+        raise ParityError(
+            "Release workflow must use deterministic release existence probe"
+        )
     require_tokens(
         publication_text,
-        ("scripts/validate_existing_release_assets.py", "MISSING_RELEASE_FILES"),
+        (
+            "scripts/probe_github_release.py",
+            "RELEASE_STATE",
+            "scripts/validate_existing_release_assets.py",
+            "MISSING_RELEASE_FILES",
+        ),
         "Release/release",
     )
 
@@ -338,6 +347,10 @@ def fixture_workflows() -> tuple[dict[str, Any], dict[str, Any]]:
             {
                 "name": "Create GitHub release",
                 "run": (
+                    "python3 scripts/probe_github_release.py "
+                    "--repository owner/repo --tag v1.2.3 "
+                    "--write-status release-state.txt --write-json existing.json\n"
+                    "RELEASE_STATE=existing\n"
                     "python3 scripts/validate_existing_release_assets.py "
                     "--release-json existing.json --asset-dir release-artifacts "
                     "--write-missing missing.txt\n"
@@ -407,6 +420,21 @@ def run_self_test() -> None:
             raise AssertionError("Release clobber failure was not attributed correctly") from error
     else:
         raise AssertionError("published asset clobber must fail parity validation")
+
+    broken_ci, broken_release = fixture_workflows()
+    create_step = next(
+        step
+        for step in broken_release["jobs"]["release"]["steps"]
+        if step.get("name") == "Create GitHub release"
+    )
+    create_step["run"] += "\ngh release view v1.2.3 2>/dev/null"
+    try:
+        validate_parity(broken_ci, broken_release)
+    except ParityError as error:
+        if "deterministic release existence probe" not in str(error):
+            raise AssertionError("ambiguous existence probe failure was not attributed correctly") from error
+    else:
+        raise AssertionError("ambiguous release existence probe must fail parity validation")
 
 
 def main() -> int:
