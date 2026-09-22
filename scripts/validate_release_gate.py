@@ -8,7 +8,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from prepare_release_version import ReleaseVersion, parse_tag
+from prepare_release_version import (
+    ReleaseVersion,
+    parse_tag,
+    validate_release_version,
+)
 from validate_release_metadata import (
     ReleaseMetadata,
     ReleaseMetadataError,
@@ -278,6 +282,7 @@ def main() -> int:
             preflight=args.preflight,
             target_ref=args.target_ref,
         )
+        validate_release_version(Path.cwd(), version)
         if not args.preflight:
             validate_tag_annotation(version.tag, metadata)
     except (ReleaseGateError, ReleaseMetadataError, ValueError) as error:

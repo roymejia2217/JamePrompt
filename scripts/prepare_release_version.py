@@ -59,6 +59,10 @@ class ReleaseVersion:
         return f"0.1.{normalized}"
 
 
+class ReleaseVersionError(ValueError):
+    """Raised when tracked package metadata does not match a release tag."""
+
+
 def normalize_release_ref(value: str) -> str:
     value = value.strip()
     prefix = "release-candidate/"
@@ -122,6 +126,71 @@ def apply_release_version(root: Path, version: ReleaseVersion) -> None:
         r"(?m)^Release:\s+.*$",
         f"Release:        {version.rpm_release}%{{?dist}}",
     )
+
+
+def read_single_field(path: Path, pattern: str, label: str) -> str:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ReleaseVersionError(f"unable to read {path}: {error}") from error
+    matches = re.findall(pattern, text, flags=re.MULTILINE)
+    if len(matches) != 1:
+        raise ReleaseVersionError(
+            f"expected exactly one {label} field in {path}, found {len(matches)}"
+        )
+    return matches[0].strip()
+
+
+def validate_release_version(root: Path, version: ReleaseVersion) -> None:
+    checks = (
+        (
+            root / "Cargo.toml",
+            r'^version = "([^"]+)"$',
+            "Cargo package version",
+            version.canonical,
+        ),
+        (
+            root / "Cargo.lock",
+            r'^\[\[package\]\]\nname = "jame-prompt"\nversion = "([^"]+)"$',
+            "Cargo lock package version",
+            version.canonical,
+        ),
+        (
+            root / "packaging/arch/PKGBUILD",
+            r"^pkgver=(.+)$",
+            "Arch pkgver",
+            version.arch,
+        ),
+        (
+            root / "packaging/arch/PKGBUILD",
+            r"^pkgrel=(.+)$",
+            "Arch pkgrel",
+            "1",
+        ),
+        (
+            root / "packaging/rpm/jame-prompt.spec",
+            r"^Version:\s+(.+)$",
+            "RPM Version",
+            version.rpm_version,
+        ),
+        (
+            root / "packaging/rpm/jame-prompt.spec",
+            r"^Release:\s+(.+)$",
+            "RPM Release",
+            f"{version.rpm_release}%{{?dist}}",
+        ),
+    )
+    mismatches: list[str] = []
+    for path, pattern, label, expected in checks:
+        actual = read_single_field(path, pattern, label)
+        if actual != expected:
+            mismatches.append(
+                f"{path}: {label} expected {expected!r}, found {actual!r}"
+            )
+    if mismatches:
+        raise ReleaseVersionError(
+            "release source version mismatch: " + "; ".join(mismatches)
+        )
 
 
 def write_github_output(path: Path, version: ReleaseVersion) -> None:
@@ -199,7 +268,15 @@ def self_test() -> None:
             "Name: jame-prompt\nVersion: 1.1.0\nRelease: 1%{?dist}\n",
             encoding="utf-8",
         )
+        try:
+            validate_release_version(root, alpha)
+        except ReleaseVersionError as error:
+            assert "release source version mismatch" in str(error)
+        else:
+            raise AssertionError("mismatched source version was accepted")
+
         apply_release_version(root, alpha)
+        validate_release_version(root, alpha)
         assert 'version = "1.2.0-alpha.1"' in (root / "Cargo.toml").read_text()
         assert 'version = "1.2.0-alpha.1"' in (root / "Cargo.lock").read_text()
         assert "pkgver=1.2.0alpha.1" in (root / "packaging/arch/PKGBUILD").read_text()
@@ -208,6 +285,7 @@ def self_test() -> None:
         assert "Release:        0.1.alpha.1%{?dist}" in rpm
 
         apply_release_version(root, beta)
+        validate_release_version(root, beta)
         assert 'version = "1.2.0-beta.1"' in (root / "Cargo.toml").read_text()
         assert 'version = "1.2.0-beta.1"' in (root / "Cargo.lock").read_text()
         assert "pkgver=1.2.0beta.1" in (root / "packaging/arch/PKGBUILD").read_text()
@@ -221,7 +299,13 @@ def main() -> int:
         description="Validate and apply a JamePrompt release tag to package metadata."
     )
     parser.add_argument("--tag", help="Release tag, for example v1.2.0-beta.1")
-    parser.add_argument("--apply", action="store_true", help="Patch the current workspace")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true", help="Patch the current workspace")
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="Fail unless tracked package metadata already matches the tag",
+    )
     parser.add_argument("--github-output", type=Path, help="Append release metadata for Actions")
     parser.add_argument("--self-test", action="store_true", help="Run deterministic contract tests")
     parser.add_argument("--root", type=Path, default=Path.cwd())
@@ -239,6 +323,8 @@ def main() -> int:
         version = parse_tag(args.tag)
         if args.apply:
             apply_release_version(args.root, version)
+        if args.check:
+            validate_release_version(args.root, version)
         if args.github_output:
             write_github_output(args.github_output, version)
     except (OSError, RuntimeError, ValueError) as error:

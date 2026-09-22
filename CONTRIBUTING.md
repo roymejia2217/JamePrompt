@@ -129,7 +129,25 @@ matching validated `CHANGELOG.md` entry. If a GitHub Release already exists, its
 title, prerelease flag, and body must match the changelog-derived metadata before artifacts
 can be replaced.
 
-Create a tag only after the changelog entry has been merged to protected `main`:
+Prepare the tracked package versions before the release preparation commit:
+
+```bash
+python3 scripts/prepare_release_version.py --tag v1.2.0-beta.10 --apply
+```
+
+Commit the resulting Cargo, Arch, and RPM metadata together with the matching changelog
+entry and deliver that preparation through the normal pull request gates. After merge,
+the same tree can be checked without mutation:
+
+```bash
+python3 scripts/prepare_release_version.py --tag v1.2.0-beta.10 --check
+```
+
+Release jobs never rewrite tracked version metadata. They accept only a tag whose committed
+source tree already matches the requested version.
+
+Create a tag only after the changelog entry and release-version preparation have been merged
+to protected `main`:
 
 ```bash
 scripts/create_release_tag.sh v1.2.0-alpha.1

@@ -45,6 +45,7 @@ python3 scripts/validate_release_metadata.py \
   --tag "$tag" \
   --changelog CHANGELOG.md \
   --write-tag-message "$tag_message_file"
+python3 scripts/prepare_release_version.py --tag "$tag" --check
 python3 scripts/validate_main_ci_evidence.py --sha "$head_commit"
 scripts/verify_change_gate.sh
 

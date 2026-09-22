@@ -54,8 +54,8 @@ jobs:
         with:
           ref: ${{ env.RELEASE_REF }}
 
-      - name: Prepare release version
-        run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --apply
+      - name: Validate release source version
+        run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --check
 
       - name: Install Debian packaging dependencies
         run: |
@@ -118,8 +118,8 @@ jobs:
         with:
           ref: ${{ env.RELEASE_REF }}
 
-      - name: Prepare release version
-        run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --apply
+      - name: Validate release source version
+        run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --check
 
       - name: Build Arch package in pinned snapshot container
         run: |
@@ -174,8 +174,8 @@ jobs:
         with:
           ref: ${{ env.RELEASE_REF }}
 
-      - name: Prepare release version
-        run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --apply
+      - name: Validate release source version
+        run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --check
 
       - name: Build RPM package in Fedora container
         run: |
@@ -216,8 +216,8 @@ jobs:
         with:
           ref: ${{ env.RELEASE_REF }}
 
-      - name: Prepare release version
-        run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --apply
+      - name: Validate release source version
+        run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --check
 
       - name: Install AppImage build dependencies
         run: |
@@ -284,10 +284,10 @@ jobs:
         with:
           ref: ${{ env.RELEASE_REF }}
 
-      - name: Prepare release version
+      - name: Validate release source version
         shell: pwsh
         run: |
-          python scripts/prepare_release_version.py --tag "$env:RELEASE_REF" --apply
+          python scripts/prepare_release_version.py --tag "$env:RELEASE_REF" --check
           $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
           $isPrerelease = $version.Contains("-").ToString().ToLowerInvariant()
           "JAMEPROMPT_IS_PRERELEASE=$isPrerelease" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append

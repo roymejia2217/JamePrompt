@@ -210,6 +210,12 @@ def normalized_needs(job: dict[str, Any], source: str) -> set[str]:
 
 
 def validate_parity(ci: dict[str, Any], release: dict[str, Any]) -> None:
+    release_text = "\n".join(flatten_strings(release))
+    if "--apply" in release_text:
+        raise ParityError(
+            "Release workflow must not mutate tracked version metadata"
+        )
+
     for platform, contract in PARITY_CONTRACTS.items():
         ci_job = get_job(ci, contract.ci_job, f"CI/{platform}")
         release_job = get_job(release, contract.release_job, f"Release/{platform}")
@@ -221,6 +227,11 @@ def validate_parity(ci: dict[str, Any], release: dict[str, Any]) -> None:
         require_tokens(
             job_text(release_job),
             contract.shared_tokens,
+            f"Release/{platform}",
+        )
+        require_tokens(
+            job_text(release_job),
+            ("scripts/prepare_release_version.py", "--check"),
             f"Release/{platform}",
         )
         require_order(
@@ -287,10 +298,16 @@ def fixture_workflows() -> tuple[dict[str, Any], dict[str, Any]]:
         }
         release_steps = [
             {
-                "name": name,
-                "run": "\n".join(contract.shared_tokens) if index == 0 else "true",
-            }
-            for index, name in enumerate(contract.release_order)
+                "name": "Validate release source version",
+                "run": "python3 scripts/prepare_release_version.py --tag \"$RELEASE_REF\" --check",
+            },
+            *[
+                {
+                    "name": name,
+                    "run": "\n".join(contract.shared_tokens) if index == 0 else "true",
+                }
+                for index, name in enumerate(contract.release_order)
+            ],
         ]
         release_jobs[contract.release_job] = {"steps": release_steps}
 
@@ -334,7 +351,7 @@ def run_self_test() -> None:
 
     broken_ci, broken_release = fixture_workflows()
     arch_steps = broken_release["jobs"]["arch"]["steps"]
-    arch_steps[1], arch_steps[2] = arch_steps[2], arch_steps[1]
+    arch_steps[2], arch_steps[3] = arch_steps[3], arch_steps[2]
     try:
         validate_parity(broken_ci, broken_release)
     except ParityError as error:
@@ -342,6 +359,17 @@ def run_self_test() -> None:
             raise AssertionError("Arch ordering failure was not attributed correctly") from error
     else:
         raise AssertionError("reordered Arch validation steps must fail parity validation")
+
+    broken_ci, broken_release = fixture_workflows()
+    deb_steps = broken_release["jobs"]["deb"]["steps"]
+    deb_steps[0]["run"] = deb_steps[0]["run"].replace("--check", "--apply")
+    try:
+        validate_parity(broken_ci, broken_release)
+    except ParityError as error:
+        if "must not mutate tracked version metadata" not in str(error):
+            raise AssertionError("Release mutation failure was not attributed correctly") from error
+    else:
+        raise AssertionError("Release workflow version mutation must fail parity validation")
 
 
 def main() -> int:
