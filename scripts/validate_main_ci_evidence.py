@@ -4,24 +4,24 @@
 from __future__ import annotations
 
 import argparse
-import json
-import os
 import re
 import subprocess
 import sys
-import urllib.error
 import urllib.parse
-import urllib.request
 from typing import Any
 
-API_ROOT = "https://api.github.com"
-API_VERSION = "2026-03-10"
+from github_api import (
+    GitHubApiError,
+    REPOSITORY_PATTERN,
+    github_token,
+    repository_url,
+    request_json,
+)
+
+
 DEFAULT_BRANCH = "main"
 DEFAULT_WORKFLOW_NAME = "CI"
 DEFAULT_WORKFLOW_PATH = ".github/workflows/ci.yml"
-REPOSITORY_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-
-
 class EvidenceError(ValueError):
     """Raised when protected-main CI evidence is absent, stale, or unsuccessful."""
 
@@ -75,35 +75,28 @@ def build_api_url(repository: str, sha: str) -> str:
             "per_page": 100,
         }
     )
-    return f"{API_ROOT}/repos/{repository}/actions/runs?{query}"
+    try:
+        return repository_url(repository, f"actions/runs?{query}")
+    except GitHubApiError as error:
+        raise EvidenceError(str(error)) from error
 
 
 def fetch_workflow_runs(repository: str, sha: str) -> dict[str, Any]:
     url = build_api_url(repository, sha)
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": API_VERSION,
-        "User-Agent": "JamePrompt-release-evidence",
-    }
-    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    request = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            payload = json.load(response)
-    except (
-        urllib.error.HTTPError,
-        urllib.error.URLError,
-        TimeoutError,
-        json.JSONDecodeError,
-    ) as error:
-        raise EvidenceError(f"unable to query GitHub Actions evidence: {error}") from error
+        response = request_json(
+            url,
+            user_agent="JamePrompt-release-evidence",
+            token=github_token(required=False),
+        )
+    except GitHubApiError as error:
+        raise EvidenceError(
+            f"unable to query GitHub Actions evidence: {error}"
+        ) from error
 
-    if not isinstance(payload, dict):
-        raise EvidenceError("GitHub Actions response root must be an object")
-    return payload
+    if response.payload is None:
+        raise EvidenceError("GitHub Actions response body is missing")
+    return response.payload
 
 
 def validate_evidence(

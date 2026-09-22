@@ -5,6 +5,7 @@ repository_root="$(git rev-parse --show-toplevel)"
 cd "$repository_root"
 
 npm run test:commitlint
+python3 scripts/github_api.py --self-test
 python3 scripts/validate_pr_description.py --self-test
 python3 scripts/prepare_release_version.py --self-test
 python3 scripts/validate_release_gate.py --self-test
