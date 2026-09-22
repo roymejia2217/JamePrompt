@@ -18,9 +18,12 @@ REQUIRED_HEADINGS = (
     "Risk and rollback",
     "Release impact",
 )
+RELEASE_TYPES = {"none", "alpha", "beta", "stable"}
 HEADING_PATTERN = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 COMMENT_PATTERN = re.compile(r"<!--.*?-->", re.DOTALL)
 PLACEHOLDER_PATTERN = re.compile(r"(?:todo|tbd|n/?a|[-–—])", re.IGNORECASE)
+RELEASE_TYPE_PATTERN = re.compile(r"^Release-Type:\s*(\S+)\s*$")
+RELEASE_REASON_PATTERN = re.compile(r"^Release-Reason:\s*(.+?)\s*$")
 
 
 class DescriptionError(ValueError):
@@ -66,7 +69,34 @@ def normalized_content(value: str) -> str:
     return COMMENT_PATTERN.sub("", value).strip()
 
 
-def validate_description(body: str) -> None:
+def parse_release_impact(value: str) -> str:
+    content = normalized_content(value)
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    if len(lines) != 2:
+        raise DescriptionError(
+            "release impact must contain exactly Release-Type and Release-Reason"
+        )
+
+    type_match = RELEASE_TYPE_PATTERN.fullmatch(lines[0])
+    if type_match is None:
+        raise DescriptionError("release impact must start with Release-Type")
+    release_type = type_match.group(1)
+    if release_type not in RELEASE_TYPES:
+        raise DescriptionError(f"invalid Release-Type: {release_type}")
+
+    reason_match = RELEASE_REASON_PATTERN.fullmatch(lines[1])
+    if reason_match is None:
+        raise DescriptionError("release impact must include Release-Reason")
+    reason = reason_match.group(1).strip()
+    if len(reason) < 20:
+        raise DescriptionError("Release-Reason must contain at least 20 characters")
+    if reason.startswith("<") and reason.endswith(">"):
+        raise DescriptionError("Release-Reason must not be a template placeholder")
+
+    return release_type
+
+
+def validate_description(body: str) -> str:
     found = sections(body)
     for heading in REQUIRED_HEADINGS:
         content = normalized_content(found[heading])
@@ -76,6 +106,8 @@ def validate_description(body: str) -> None:
             raise DescriptionError(
                 f"required section contains only a placeholder: {heading}"
             )
+
+    return parse_release_impact(found["Release impact"])
 
 
 def self_test() -> None:
@@ -101,9 +133,14 @@ Low risk. Revert the focused editor commit if regression evidence appears.
 
 ## Release impact
 
-Beta candidate.
+Release-Type: beta
+Release-Reason: This PR prepares the next beta validation candidate.
 """
-    validate_description(valid)
+    assert validate_description(valid) == "beta"
+
+    for release_type in ("alpha", "stable", "none"):
+        candidate = valid.replace("Release-Type: beta", f"Release-Type: {release_type}")
+        assert validate_description(candidate) == release_type
 
     invalid_cases = [
         ("## Summary\n\nPresent", "missing required section"),
@@ -138,6 +175,38 @@ Beta candidate.
             ),
             "duplicate required section",
         ),
+        (
+            valid.replace("Release-Type: beta", "Release-Type: rc"),
+            "invalid Release-Type",
+        ),
+        (
+            valid.replace(
+                "Release-Type: beta",
+                "Release-Type: <none|alpha|beta|stable>",
+            ),
+            "invalid Release-Type",
+        ),
+        (
+            valid.replace(
+                "Release-Reason: This PR prepares the next beta validation candidate.",
+                "Release-Reason: too short",
+            ),
+            "Release-Reason must contain at least 20 characters",
+        ),
+        (
+            valid.replace(
+                "Release-Reason: This PR prepares the next beta validation candidate.",
+                "Release-Reason: <explain why this PR does or does not require a release>",
+            ),
+            "Release-Reason must not be a template placeholder",
+        ),
+        (
+            valid.replace(
+                "Release-Reason: This PR prepares the next beta validation candidate.",
+                "Release-Reason: This reason is long enough to be valid.\nExtra: forbidden",
+            ),
+            "release impact must contain exactly Release-Type and Release-Reason",
+        ),
     ]
 
     for invalid, expected in invalid_cases:
@@ -154,7 +223,7 @@ Beta candidate.
     with tempfile.TemporaryDirectory() as directory:
         body_path = Path(directory) / "pr.md"
         body_path.write_text(valid, encoding="utf-8")
-        validate_description(body_path.read_text(encoding="utf-8"))
+        assert validate_description(body_path.read_text(encoding="utf-8")) == "beta"
 
 
 def main() -> int:
@@ -173,12 +242,14 @@ def main() -> int:
         parser.error("--body-file is required unless --self-test is used")
 
     try:
-        validate_description(args.body_file.read_text(encoding="utf-8"))
+        release_type = validate_description(
+            args.body_file.read_text(encoding="utf-8")
+        )
     except (OSError, DescriptionError) as error:
         print(f"pull request description error: {error}", file=sys.stderr)
         return 2
 
-    print("pull request description contract: ok")
+    print(f"pull request description contract: ok (release-type={release_type})")
     return 0
 
 

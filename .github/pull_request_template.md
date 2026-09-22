@@ -20,4 +20,5 @@
 
 ## Release impact
 
-<!-- State None, alpha, beta, stable, migration impact, or another explicit release consequence. -->
+Release-Type: <none|alpha|beta|stable>
+Release-Reason: <explain why this PR does or does not require a release>
