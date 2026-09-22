@@ -68,6 +68,16 @@ All six sections must contain non-placeholder content. Unknown, duplicated, miss
 reordered level-two sections are rejected by `scripts/validate_pr_description.py`.
 The PR title is independently checked against the Conventional Commit header profile.
 
+`Release impact` is machine-readable and contains exactly two fields:
+
+```text
+Release-Type: none|alpha|beta|stable
+Release-Reason: a meaningful explanation of at least 20 characters
+```
+
+The type vocabulary is closed and lowercase. Template placeholders, unknown release types,
+short reasons, additional fields, or prose outside those two fields are rejected.
+
 Open a reviewed pull request through the checked-in path:
 
 ```bash
