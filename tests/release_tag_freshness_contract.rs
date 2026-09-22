@@ -124,3 +124,29 @@ fn release_tag_push_reconciles_remote_state_after_local_tag_validation() {
         "remote state must be reconciled after tag validation and before push"
     );
 }
+
+
+#[test]
+fn remote_tag_absence_probe_fails_closed_on_query_errors() {
+    let tagger = read_file("scripts/create_release_tag.sh");
+
+    for required in [
+        "remote_status=$?",
+        "[ \"$remote_status\" -ne 2 ]",
+        "unable to verify remote release tag absence: $tag",
+        "exit \"$remote_status\"",
+    ] {
+        assert!(
+            tagger.contains(required),
+            "remote tag absence probe must distinguish query failure: {}",
+            required
+        );
+    }
+
+    assert!(
+        !tagger.contains(
+            "git ls-remote --exit-code origin \"refs/tags/$tag\" >/dev/null || true"
+        ),
+        "remote tag lookup errors must never be suppressed"
+    );
+}
