@@ -127,7 +127,8 @@ fn release_notes_are_rendered_from_validated_changelog_metadata() {
         "--changelog CHANGELOG.md",
         "--write-notes \"$NOTES_FILE\"",
         "--notes-file \"$NOTES_FILE\"",
-        "--json tagName,name,body,isPrerelease",
+        "python3 scripts/probe_github_release.py",
+        "--write-json \"$EXISTING_RELEASE_JSON\"",
         "--existing-release-json \"$EXISTING_RELEASE_JSON\"",
     ] {
         assert!(
