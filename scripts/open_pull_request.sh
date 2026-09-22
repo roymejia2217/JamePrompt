@@ -40,8 +40,14 @@ scripts/verify_change_gate.sh
 
 existing="$(gh pr list --base main --head "$branch" --state open --json number --jq '.[0].number')"
 if [ -z "$existing" ]; then
-  gh pr create --base main --head "$branch" --title "$title" --body-file "$body_file"
+  gh pr create --draft --base main --head "$branch" --title "$title" --body-file "$body_file"
   existing="$(gh pr list --base main --head "$branch" --state open --json number --jq '.[0].number')"
 fi
 
-gh pr merge "$existing" --auto --rebase
+[ -n "$existing" ] || {
+  echo "pull request creation did not produce an open PR" >&2
+  exit 2
+}
+
+details="$(gh pr view "$existing" --json number,url,isDraft,headRefName,baseRefName)"
+printf 'pull request prepared: %s\n' "$details"
