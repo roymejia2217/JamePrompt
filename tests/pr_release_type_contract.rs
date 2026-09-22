@@ -49,9 +49,8 @@ fn pull_request_release_type_contract_rejects_placeholder_and_unknown_values() {
 
     for required in [
         "Release-Type: beta",
-        "Release-Type: alpha",
-        "Release-Type: stable",
-        "Release-Type: none",
+        "for release_type in (\"alpha\", \"stable\", \"none\")",
+        "f\"Release-Type: {release_type}\"",
         "Release-Type: rc",
         "Release-Type: <none|alpha|beta|stable>",
     ] {
