@@ -142,6 +142,23 @@ def self_test() -> None:
         )
         assert complete == []
 
+        try:
+            missing_for_complete = validate_existing_assets(
+                {"assets": [first_asset]},
+                asset_dir,
+            )
+            if missing_for_complete:
+                raise ReleaseAssetError(
+                    "published release is incomplete: "
+                    "missing release asset(s): "
+                    + ", ".join(path.name for path in missing_for_complete)
+                )
+        except ReleaseAssetError as error:
+            assert "published release is incomplete" in str(error)
+            assert "missing release asset" in str(error)
+        else:
+            raise AssertionError("incomplete published release was accepted")
+
         mismatch = dict(first_asset)
         mismatch["digest"] = "sha256:" + ("0" * 64)
         expect_error(
@@ -193,6 +210,11 @@ def main() -> int:
     parser.add_argument("--release-json", type=Path)
     parser.add_argument("--asset-dir", type=Path)
     parser.add_argument("--write-missing", type=Path)
+    parser.add_argument(
+        "--require-complete",
+        action="store_true",
+        help="Fail when any staged release asset is still missing remotely.",
+    )
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
 
@@ -211,6 +233,12 @@ def main() -> int:
         if not isinstance(payload, dict):
             raise ReleaseAssetError("GitHub Release JSON root must be an object")
         missing = validate_existing_assets(payload, args.asset_dir)
+        if args.require_complete and missing:
+            missing_names = ", ".join(path.name for path in missing)
+            raise ReleaseAssetError(
+                "published release is incomplete: "
+                f"missing release asset(s): {missing_names}"
+            )
         args.write_missing.write_text(
             "".join(f"{path.as_posix()}\n" for path in missing),
             encoding="utf-8",
