@@ -495,9 +495,23 @@ jobs:
               --tag "$TAG_NAME" \
               --changelog CHANGELOG.md \
               --existing-release-json "$EXISTING_RELEASE_JSON"
-            gh release upload "$TAG_NAME" "${RELEASE_FILES[@]}" \
-              --repo "${{ github.repository }}" \
-              --clobber
+
+            EXISTING_RELEASE_ASSETS_JSON="$RUNNER_TEMP/existing-release-assets.json"
+            MISSING_RELEASE_FILES_PATH="$RUNNER_TEMP/missing-release-files.txt"
+            gh api "repos/${{ github.repository }}/releases/tags/$TAG_NAME" \
+              > "$EXISTING_RELEASE_ASSETS_JSON"
+            python3 scripts/validate_existing_release_assets.py \
+              --release-json "$EXISTING_RELEASE_ASSETS_JSON" \
+              --asset-dir release-artifacts \
+              --write-missing "$MISSING_RELEASE_FILES_PATH"
+            mapfile -t MISSING_RELEASE_FILES < "$MISSING_RELEASE_FILES_PATH"
+
+            if [ "${#MISSING_RELEASE_FILES[@]}" -gt 0 ]; then
+              gh release upload "$TAG_NAME" "${MISSING_RELEASE_FILES[@]}" \
+                --repo "${{ github.repository }}"
+            else
+              echo "No missing release assets to upload."
+            fi
           else
             gh release create "$TAG_NAME" "${RELEASE_FILES[@]}" \
               --repo "${{ github.repository }}" \

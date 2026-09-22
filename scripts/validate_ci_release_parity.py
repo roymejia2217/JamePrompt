@@ -248,6 +248,15 @@ def validate_parity(ci: dict[str, Any], release: dict[str, Any]) -> None:
         )
 
     release_job = get_job(release, "release", "Release/release")
+    publication_text = job_text(release_job)
+    if "--clobber" in publication_text:
+        raise ParityError("Release workflow must not clobber published assets")
+    require_tokens(
+        publication_text,
+        ("scripts/validate_existing_release_assets.py", "MISSING_RELEASE_FILES"),
+        "Release/release",
+    )
+
     missing_release_needs = RELEASE_REQUIRED_NEEDS - normalized_needs(
         release_job, "Release/release"
     )
@@ -326,7 +335,15 @@ def fixture_workflows() -> tuple[dict[str, Any], dict[str, Any]]:
                 "run": "python3 scripts/validate_reusable_release_run.py",
             },
             {"name": "Download artifacts from existing run", "run": "true"},
-            {"name": "Create GitHub release", "run": "true"},
+            {
+                "name": "Create GitHub release",
+                "run": (
+                    "python3 scripts/validate_existing_release_assets.py "
+                    "--release-json existing.json --asset-dir release-artifacts "
+                    "--write-missing missing.txt\n"
+                    "MISSING_RELEASE_FILES=()"
+                ),
+            },
         ],
     }
     return {"jobs": ci_jobs}, {"jobs": release_jobs}
@@ -375,6 +392,21 @@ def run_self_test() -> None:
             raise AssertionError("Release mutation failure was not attributed correctly") from error
     else:
         raise AssertionError("Release workflow version mutation must fail parity validation")
+
+    broken_ci, broken_release = fixture_workflows()
+    create_step = next(
+        step
+        for step in broken_release["jobs"]["release"]["steps"]
+        if step.get("name") == "Create GitHub release"
+    )
+    create_step["run"] += "\ngh release upload v1.2.3 artifact --clobber"
+    try:
+        validate_parity(broken_ci, broken_release)
+    except ParityError as error:
+        if "Release workflow must not clobber published assets" not in str(error):
+            raise AssertionError("Release clobber failure was not attributed correctly") from error
+    else:
+        raise AssertionError("published asset clobber must fail parity validation")
 
 
 def main() -> int:
