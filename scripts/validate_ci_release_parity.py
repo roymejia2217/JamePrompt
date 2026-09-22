@@ -638,6 +638,28 @@ def run_self_test() -> None:
         )
 
     broken_ci, broken_release = fixture_workflows()
+    release_gate_validation = step_by_name(
+        broken_release["jobs"]["release-gate"],
+        "Validate release provenance and version",
+        "Release/release-gate",
+    )
+    release_gate_validation["run"] = release_gate_validation["run"].replace(
+        ' --source-ref "$RELEASE_REF"',
+        "",
+    )
+    try:
+        validate_parity(broken_ci, broken_release)
+    except ParityError as error:
+        if "Release/release-gate" not in str(error):
+            raise AssertionError(
+                "release-gate source-data boundary failure was not attributed correctly"
+            ) from error
+    else:
+        raise AssertionError(
+            "release-gate without explicit tagged source data must fail parity validation"
+        )
+
+    broken_ci, broken_release = fixture_workflows()
     checkout_step = step_by_name(
         broken_release["jobs"]["release"],
         "Checkout trusted release tooling",
