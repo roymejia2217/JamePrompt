@@ -9,6 +9,7 @@ python3 scripts/validate_pr_description.py --self-test
 python3 scripts/prepare_release_version.py --self-test
 python3 scripts/validate_release_gate.py --self-test
 python3 scripts/validate_release_metadata.py --self-test
+python3 scripts/validate_existing_release_assets.py --self-test
 python3 scripts/stage_release_assets.py --self-test
 python3 scripts/validate_main_ci_evidence.py --self-test
 python3 scripts/validate_reusable_release_run.py --self-test
