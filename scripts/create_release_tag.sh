@@ -22,18 +22,43 @@ cleanup_local_tag() {
 }
 trap cleanup_local_tag EXIT
 
-assert_release_state_current() {
+assert_main_current() {
   head_commit="$(git rev-parse HEAD)"
   main_commit="$(git rev-parse origin/main)"
   [ "$head_commit" = "$main_commit" ] || {
     echo "release tags must be created from the current origin/main commit" >&2
     exit 2
   }
+}
 
+assert_local_tag_absent() {
   git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null && {
     echo "release tag already exists: $tag" >&2
     exit 2
   }
+}
+
+assert_remote_tag_absent() {
+  if git ls-remote --exit-code origin "refs/tags/$tag" >/dev/null; then
+    echo "release tag already exists on origin: $tag" >&2
+    exit 2
+  else
+    remote_status=$?
+    if [ "$remote_status" -ne 2 ]; then
+      echo "unable to verify remote release tag absence: $tag" >&2
+      exit "$remote_status"
+    fi
+  fi
+}
+
+assert_release_state_current() {
+  assert_main_current
+  assert_local_tag_absent
+}
+
+assert_release_push_state_current() {
+  assert_main_current
+  assert_remote_tag_absent
 }
 
 git diff --quiet
@@ -64,6 +89,9 @@ tag_created=true
 python3 scripts/validate_release_gate.py \
   --tag "$tag" \
   --main-ref origin/main
+
+git fetch origin main --tags
+assert_release_push_state_current
 
 git push origin "$tag"
 tag_pushed=true
