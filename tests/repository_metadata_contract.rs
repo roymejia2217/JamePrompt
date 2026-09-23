@@ -248,3 +248,30 @@ fn readme_documents_published_backup_and_current_architecture() {
         );
     }
 }
+
+
+#[test]
+fn readme_backup_scope_matches_serialized_product_contract() {
+    let readme = read_file("README.md");
+    let backup = read_file("src/prompt_backup.rs");
+
+    for required in [
+        "pub app_name: String",
+        "pub app_version: String",
+        "pub schema_version: u32",
+        "pub prompts: Vec<Prompt>",
+    ] {
+        assert!(
+            backup.contains(required),
+            "backup schema contract missing serialized field: {}",
+            required
+        );
+    }
+
+    assert!(
+        readme.contains(
+            "Prompt backups contain prompt records only; settings remain in `settings.json` and are not included in the JSON backup."
+        ),
+        "README must not imply that prompt backups include application settings"
+    );
+}
