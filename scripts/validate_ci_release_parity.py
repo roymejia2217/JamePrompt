@@ -692,6 +692,25 @@ def run_self_test() -> None:
         )
 
     broken_ci, broken_release = fixture_workflows()
+    ci_appimage_tool_step = step_by_name(
+        broken_ci["jobs"]["test-linux"],
+        "Install verified AppImage tools",
+        "CI/appimage",
+    )
+    ci_appimage_tool_step["env"] = {"GITHUB_TOKEN": "${{ github.token }}"}
+    try:
+        validate_parity(broken_ci, broken_release)
+    except ParityError as error:
+        if "AppImage tool installer must not receive GitHub token" not in str(error):
+            raise AssertionError(
+                "CI AppImage token exposure failure was not attributed correctly"
+            ) from error
+    else:
+        raise AssertionError(
+            "CI AppImage tool installer with GitHub token must fail parity validation"
+        )
+
+    broken_ci, broken_release = fixture_workflows()
     appimage_checkout = step_by_name(
         broken_release["jobs"]["appimage"],
         "Checkout",
