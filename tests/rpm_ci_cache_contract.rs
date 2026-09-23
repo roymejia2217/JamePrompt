@@ -100,7 +100,6 @@ fn rpm_cache_is_ci_only_and_release_remains_uncached() {
     );
 }
 
-
 #[test]
 fn rpm_cache_write_boundary_is_trusted_and_post_validation() {
     let ci = read_file(".github/workflows/ci.yml");
