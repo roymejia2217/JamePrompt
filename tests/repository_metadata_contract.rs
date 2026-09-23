@@ -419,7 +419,6 @@ fn unreleased_linux_x11_runtime_fix_claim_matches_packaging_contract() {
     }
 }
 
-
 #[test]
 fn unreleased_metadata_tracks_windows_msi_lifecycle_fix_as_fixed() {
     let changelog = read_file("CHANGELOG.md");
@@ -456,7 +455,6 @@ fn unreleased_metadata_tracks_windows_msi_lifecycle_fix_as_fixed() {
         );
     }
 }
-
 
 #[test]
 fn unreleased_windows_msi_lifecycle_fix_claim_matches_installer_contract() {
