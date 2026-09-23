@@ -190,3 +190,32 @@ fn msi_builder_prerelease_support_remains_fail_closed() {
         "MSI builder must not silently expand the release profile to rc"
     );
 }
+
+
+#[test]
+fn protected_ci_resolves_msi_path_from_tracked_package_version() {
+    let ci = read_file(".github/workflows/ci.yml");
+    let windows = ci
+        .split("\n  test-windows:\n")
+        .nth(1)
+        .expect("CI must define test-windows")
+        .split("\n  test_deb:\n")
+        .next()
+        .expect("test-windows must precede test_deb");
+
+    for required in [
+        "$version = (Select-String -Path Cargo.toml",
+        "JamePrompt-$version-x64.msi",
+    ] {
+        assert!(
+            windows.contains(required),
+            "Windows CI must derive MSI validation identity from tracked package metadata: {}",
+            required
+        );
+    }
+
+    assert!(
+        !windows.contains("JamePrompt-1.1.0-x64.msi"),
+        "Windows CI must not pin MSI validation to a historical stable version"
+    );
+}
