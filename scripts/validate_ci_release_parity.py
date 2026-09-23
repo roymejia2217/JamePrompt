@@ -236,6 +236,24 @@ def validate_parity(ci: dict[str, Any], release: dict[str, Any]) -> None:
     for platform, contract in PARITY_CONTRACTS.items():
         ci_job = get_job(ci, contract.ci_job, f"CI/{platform}")
         release_job = get_job(release, contract.release_job, f"Release/{platform}")
+        builder_checkout = step_by_name(
+            release_job,
+            "Checkout",
+            f"Release/{platform}",
+        )
+        builder_checkout_with = builder_checkout.get("with")
+        if not isinstance(builder_checkout_with, dict):
+            raise ParityError(
+                f"Release/{platform}: builder checkout must use release tag data"
+            )
+        if builder_checkout_with.get("ref") != "${{ env.RELEASE_REF }}":
+            raise ParityError(
+                f"Release/{platform}: builder checkout must use release tag data"
+            )
+        if builder_checkout_with.get("persist-credentials") is not False:
+            raise ParityError(
+                f"Release/{platform}: builder checkout must disable persisted credentials"
+            )
         require_tokens(
             job_text(ci_job),
             contract.shared_tokens,
@@ -425,6 +443,14 @@ def fixture_workflows() -> tuple[dict[str, Any], dict[str, Any]]:
         }
         release_steps = [
             {
+                "name": "Checkout",
+                "uses": "actions/checkout@pinned",
+                "with": {
+                    "ref": "${{ env.RELEASE_REF }}",
+                    "persist-credentials": False,
+                },
+            },
+            {
                 "name": "Validate release source version",
                 "run": "python3 scripts/prepare_release_version.py --tag \"$RELEASE_REF\" --check",
             },
@@ -559,8 +585,12 @@ def run_self_test() -> None:
         raise AssertionError("reordered Arch validation steps must fail parity validation")
 
     broken_ci, broken_release = fixture_workflows()
-    deb_steps = broken_release["jobs"]["deb"]["steps"]
-    deb_steps[0]["run"] = deb_steps[0]["run"].replace("--check", "--apply")
+    deb_version_step = step_by_name(
+        broken_release["jobs"]["deb"],
+        "Validate release source version",
+        "Release/debian",
+    )
+    deb_version_step["run"] = deb_version_step["run"].replace("--check", "--apply")
     try:
         validate_parity(broken_ci, broken_release)
     except ParityError as error:
