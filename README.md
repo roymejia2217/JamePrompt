@@ -265,6 +265,8 @@ JamePrompt/
 └── README.md
 ```
 
+`src/application/` contains application-level orchestration and stores, while `src/domain/` contains domain notification types and policies. Platform-specific behavior is isolated behind `platform.rs`, hotkey adapters, tray integration, and window lifecycle modules.
+
 ---
 
 ## Screenshots
