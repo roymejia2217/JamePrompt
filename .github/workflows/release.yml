@@ -298,6 +298,10 @@ jobs:
           ref: ${{ env.RELEASE_REF }}
           persist-credentials: false
 
+      - name: Validate Windows packaging PowerShell syntax
+        shell: pwsh
+        run: ./scripts/validate_windows_packaging_syntax.ps1
+
       - name: Validate release source version
         shell: pwsh
         run: |
