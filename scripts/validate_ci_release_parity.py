@@ -254,6 +254,24 @@ def validate_parity(ci: dict[str, Any], release: dict[str, Any]) -> None:
             raise ParityError(
                 f"Release/{platform}: builder checkout must disable persisted credentials"
             )
+        if platform == "appimage":
+            for source, appimage_job in (
+                ("CI/appimage", ci_job),
+                ("Release/appimage", release_job),
+            ):
+                tool_step = step_by_name(
+                    appimage_job,
+                    "Install verified AppImage tools",
+                    source,
+                )
+                tool_step_text = "\n".join(flatten_strings(tool_step))
+                if any(
+                    token in tool_step_text
+                    for token in ("GH_TOKEN", "GITHUB_TOKEN", "github.token")
+                ):
+                    raise ParityError(
+                        f"{source}: AppImage tool installer must not receive GitHub token"
+                    )
         require_tokens(
             job_text(ci_job),
             contract.shared_tokens,
@@ -433,14 +451,20 @@ def fixture_workflows() -> tuple[dict[str, Any], dict[str, Any]]:
     release_jobs: dict[str, Any] = {}
 
     for contract in PARITY_CONTRACTS.values():
-        ci_jobs[contract.ci_job] = {
-            "steps": [
+        ci_steps = [
+            {
+                "name": "Parity fixture",
+                "run": "\n".join(contract.shared_tokens),
+            }
+        ]
+        if contract.release_job == "appimage":
+            ci_steps.append(
                 {
-                    "name": "Parity fixture",
-                    "run": "\n".join(contract.shared_tokens),
+                    "name": "Install verified AppImage tools",
+                    "run": "scripts/install_appimage_tools.sh",
                 }
-            ]
-        }
+            )
+        ci_jobs[contract.ci_job] = {"steps": ci_steps}
         release_steps = [
             {
                 "name": "Checkout",
@@ -647,6 +671,25 @@ def run_self_test() -> None:
     else:
         raise AssertionError("missing publication attestation must fail parity validation")
 
+
+    broken_ci, broken_release = fixture_workflows()
+    appimage_tool_step = step_by_name(
+        broken_release["jobs"]["appimage"],
+        "Install verified AppImage tools",
+        "Release/appimage",
+    )
+    appimage_tool_step["env"] = {"GH_TOKEN": "${{ github.token }}"}
+    try:
+        validate_parity(broken_ci, broken_release)
+    except ParityError as error:
+        if "AppImage tool installer must not receive GitHub token" not in str(error):
+            raise AssertionError(
+                "AppImage token exposure failure was not attributed correctly"
+            ) from error
+    else:
+        raise AssertionError(
+            "AppImage tool installer with GitHub token must fail parity validation"
+        )
 
     broken_ci, broken_release = fixture_workflows()
     appimage_checkout = step_by_name(
