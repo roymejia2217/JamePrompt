@@ -218,3 +218,98 @@ fn protected_ci_resolves_msi_path_from_tracked_package_version() {
         "Windows CI must not pin MSI validation to a historical stable version"
     );
 }
+
+
+#[test]
+fn msi_builder_has_one_execution_path_and_numeric_product_version() {
+    let builder = read_file("scripts/build_windows_msi.ps1");
+
+    for required in [
+        "$InstallerVersion = $Matches['base']",
+        "\"--install-version\", $InstallerVersion",
+        "JamePrompt-$Version-x64.msi",
+    ] {
+        assert!(
+            builder.contains(required),
+            "MSI builder must separate artifact SemVer from numeric ProductVersion: {}",
+            required
+        );
+    }
+
+    assert_eq!(
+        builder.matches("& cargo @cargoArgs").count(),
+        1,
+        "MSI builder must invoke cargo-wix exactly once"
+    );
+    assert_eq!(
+        builder.matches("Write-Host \"Built MSI:").count(),
+        1,
+        "MSI builder must have exactly one successful completion path"
+    );
+}
+
+#[test]
+fn windows_packaging_uses_shared_fail_fast_powershell_syntax_gate() {
+    let validator = read_file("scripts/validate_windows_packaging_syntax.ps1");
+
+    for required in [
+        "System.Management.Automation.Language.Parser",
+        "ParseFile",
+        "scripts/build_windows_msi.ps1",
+        "scripts/validate_windows_msi.ps1",
+        "scripts/validate_windows_runtime.ps1",
+        "scripts/smoke/native-hotkey-windows.ps1",
+        "PowerShell syntax validation failed",
+    ] {
+        assert!(
+            validator.contains(required),
+            "shared Windows packaging syntax validator missing contract: {}",
+            required
+        );
+    }
+
+    let ci = read_file(".github/workflows/ci.yml");
+    let ci_windows = ci
+        .split("\n  test-windows:\n")
+        .nth(1)
+        .expect("CI must define test-windows")
+        .split("\n  test_deb:\n")
+        .next()
+        .expect("test-windows must precede test_deb");
+    let ci_syntax = ci_windows
+        .find("Validate Windows packaging PowerShell syntax")
+        .expect("CI must validate Windows packaging PowerShell syntax");
+    let ci_tests = ci_windows
+        .find("Run Windows tests")
+        .expect("CI must run Windows tests");
+    assert!(
+        ci_syntax < ci_tests,
+        "PowerShell syntax validation must fail fast before expensive Windows tests"
+    );
+
+    let release = read_file(".github/workflows/release.yml");
+    let release_windows = release
+        .split("\n  windows:\n")
+        .nth(1)
+        .expect("Release workflow must define windows job")
+        .split("\n  release:\n")
+        .next()
+        .expect("windows job must precede release job");
+    let release_syntax = release_windows
+        .find("Validate Windows packaging PowerShell syntax")
+        .expect("Release must validate Windows packaging PowerShell syntax");
+    let release_build = release_windows
+        .find("Build Windows binaries")
+        .expect("Release must build Windows binaries");
+    assert!(
+        release_syntax < release_build,
+        "Release syntax validation must run before expensive Windows builds"
+    );
+
+    for windows in [ci_windows, release_windows] {
+        assert!(
+            windows.contains("scripts/validate_windows_packaging_syntax.ps1"),
+            "CI and Release must reuse the same PowerShell syntax validator"
+        );
+    }
+}
