@@ -49,7 +49,7 @@ if [ "${JAME_PROMPT_REUSE_RELEASE_BUILD:-0}" != "1" ]; then
 fi
 
 %check
-cargo test --locked --bin %{name}
+cargo test --release --locked --bin %{name}
 desktop-file-validate packaging/linux/jame-prompt.desktop
 
 %install
