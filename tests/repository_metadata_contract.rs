@@ -225,7 +225,6 @@ fn protected_and_local_gates_self_test_repository_metadata_contracts() {
     }
 }
 
-
 #[test]
 fn readme_documents_published_backup_and_current_architecture() {
     let readme = read_file("README.md");
@@ -248,7 +247,6 @@ fn readme_documents_published_backup_and_current_architecture() {
         );
     }
 }
-
 
 #[test]
 fn readme_backup_scope_matches_serialized_product_contract() {
