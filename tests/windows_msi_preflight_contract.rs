@@ -142,7 +142,6 @@ fn msi_validator_exercises_install_runtime_and_uninstall_lifecycle() {
     }
 }
 
-
 #[test]
 fn msi_builder_accepts_supported_release_profile_prereleases() {
     let builder = read_file("scripts/build_windows_msi.ps1");
@@ -164,7 +163,6 @@ fn msi_builder_accepts_supported_release_profile_prereleases() {
         "MSI builder must not reject supported alpha/beta source versions"
     );
 }
-
 
 #[test]
 fn msi_builder_prerelease_support_remains_fail_closed() {
