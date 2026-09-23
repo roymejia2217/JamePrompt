@@ -313,3 +313,51 @@ fn windows_packaging_uses_shared_fail_fast_powershell_syntax_gate() {
         );
     }
 }
+
+
+#[test]
+fn prerelease_msi_distribution_policy_remains_stable_only() {
+    let release = read_file(".github/workflows/release.yml");
+    let windows = release
+        .split("\n  windows:\n")
+        .nth(1)
+        .expect("Release workflow must define windows job")
+        .split("\n  release:\n")
+        .next()
+        .expect("windows job must precede release job");
+
+    for step in [
+        "Install pinned WiX Toolset",
+        "Install pinned cargo-wix",
+        "Build MSI",
+        "Validate MSI install and uninstall",
+        "Upload MSI",
+    ] {
+        let start = windows
+            .find(&format!("- name: {step}"))
+            .unwrap_or_else(|| panic!("Release Windows job missing step: {step}"));
+        let suffix = &windows[start..];
+        let boundary = suffix
+            .find("\n      - name:")
+            .map(|index| &suffix[..index])
+            .unwrap_or(suffix);
+        assert!(
+            boundary.contains("if: env.JAMEPROMPT_IS_PRERELEASE != 'true'"),
+            "prerelease policy must keep MSI step stable-only: {step}"
+        );
+    }
+
+    let staging = read_file("scripts/stage_release_assets.py");
+    assert!(
+        staging.contains("EXPECTED_STABLE = EXPECTED_PRERELEASE | {\"windows-msi\"}"),
+        "asset staging must keep windows-msi outside prerelease assets"
+    );
+
+    let reusable = read_file("scripts/validate_reusable_release_run.py");
+    assert!(
+        reusable.contains(
+            "EXPECTED_STABLE_ARTIFACTS = EXPECTED_PRERELEASE_ARTIFACTS | {\"windows-msi\"}"
+        ),
+        "reusable release provenance must keep windows-msi stable-only"
+    );
+}
