@@ -11,7 +11,6 @@ fn read_file(relative: &str) -> String {
         .replace("\r\n", "\n")
 }
 
-
 fn release_block_for<'a>(changelog: &'a str, heading: &str) -> &'a str {
     changelog
         .split(heading)
