@@ -71,3 +71,34 @@ fn pull_request_target_checkout_is_base_bound_and_tokenless() {
         );
     }
 }
+
+
+#[test]
+fn nonrelease_workflows_reject_explicit_token_reintroduction() {
+    let ci = read_file(".github/workflows/ci.yml");
+    let governance = read_file(".github/workflows/pr-governance.yml");
+
+    for (source, workflow) in [("CI", ci.as_str()), ("Governance", governance.as_str())] {
+        for forbidden in [
+            "GH_TOKEN:",
+            "GITHUB_TOKEN:",
+            "token: ${{ github.token }}",
+            "token: ${{ secrets.GITHUB_TOKEN }}",
+        ] {
+            assert!(
+                !workflow.contains(forbidden),
+                "{source} must not reintroduce explicit GitHub token exposure: {forbidden}"
+            );
+        }
+    }
+
+    for forbidden in [
+        "ref: ${{ github.event.pull_request.head.sha }}",
+        "refs/pull/",
+    ] {
+        assert!(
+            !governance.contains(forbidden),
+            "pull_request_target governance must never execute pull request head content: {forbidden}"
+        );
+    }
+}
