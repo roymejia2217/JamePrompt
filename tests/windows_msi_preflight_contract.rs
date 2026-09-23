@@ -191,7 +191,6 @@ fn msi_builder_prerelease_support_remains_fail_closed() {
     );
 }
 
-
 #[test]
 fn protected_ci_resolves_msi_path_from_tracked_package_version() {
     let ci = read_file(".github/workflows/ci.yml");
