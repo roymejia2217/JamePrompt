@@ -220,7 +220,6 @@ fn protected_ci_resolves_msi_path_from_tracked_package_version() {
     );
 }
 
-
 #[test]
 fn msi_builder_has_one_execution_path_and_numeric_product_version() {
     let builder = read_file("scripts/build_windows_msi.ps1");
@@ -314,7 +313,6 @@ fn windows_packaging_uses_shared_fail_fast_powershell_syntax_gate() {
         );
     }
 }
-
 
 #[test]
 fn prerelease_msi_distribution_policy_remains_stable_only() {
