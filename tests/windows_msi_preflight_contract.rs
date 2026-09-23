@@ -141,3 +141,26 @@ fn msi_validator_exercises_install_runtime_and_uninstall_lifecycle() {
         );
     }
 }
+
+
+#[test]
+fn msi_builder_accepts_supported_release_profile_prereleases() {
+    let builder = read_file("scripts/build_windows_msi.ps1");
+
+    for required in [
+        "$SupportedVersionPattern",
+        "(?:alpha|beta)",
+        "JamePrompt-$Version-x64.msi",
+    ] {
+        assert!(
+            builder.contains(required),
+            "MSI builder must support repository prerelease identity: {}",
+            required
+        );
+    }
+
+    assert!(
+        !builder.contains("MSI build requires a stable numeric package version"),
+        "MSI builder must not reject supported alpha/beta source versions"
+    );
+}
