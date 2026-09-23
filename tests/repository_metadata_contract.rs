@@ -349,7 +349,6 @@ fn unreleased_native_autopaste_fix_claim_matches_runtime_contract() {
     }
 }
 
-
 #[test]
 fn unreleased_metadata_tracks_packaged_linux_x11_runtime_fix_as_fixed() {
     let changelog = read_file("CHANGELOG.md");
@@ -386,7 +385,6 @@ fn unreleased_metadata_tracks_packaged_linux_x11_runtime_fix_as_fixed() {
         );
     }
 }
-
 
 #[test]
 fn unreleased_linux_x11_runtime_fix_claim_matches_packaging_contract() {
