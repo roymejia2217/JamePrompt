@@ -155,7 +155,6 @@ fn tracked_release_candidate_identity_is_v1_2_0_beta_10() {
     );
 }
 
-
 #[test]
 fn beta_10_release_notes_freeze_fixed_entries_and_reset_unreleased() {
     let changelog = read_file("CHANGELOG.md");
