@@ -67,15 +67,35 @@ fn rpm_builder_uses_persistent_dedicated_cargo_target() {
     let spec = read_file("packaging/rpm/jame-prompt.spec");
 
     assert!(
-        builder.contains("RPM_CARGO_TARGET_DIR=\"\${JAME_PROMPT_RPM_CARGO_TARGET_DIR:-$PWD/target/rpm-cargo}\""),
-        "RPM builder must define a dedicated persistent Cargo target directory"
+        builder.contains("if [[ -n \"\${JAME_PROMPT_RPM_CARGO_TARGET_DIR:-}\" ]]; then"),
+        "RPM builder must make persistent Cargo output an explicit opt-in"
     );
     assert!(
-        builder.contains("export CARGO_TARGET_DIR=\"$RPM_CARGO_TARGET_DIR\""),
-        "RPM builder must export the dedicated Cargo target directory to rpmbuild"
+        builder.contains("export CARGO_TARGET_DIR=\"$JAME_PROMPT_RPM_CARGO_TARGET_DIR\""),
+        "RPM builder must export the opt-in Cargo target directory to rpmbuild"
     );
     assert!(
         spec.contains("\${CARGO_TARGET_DIR:-target}/release/%{name}"),
         "RPM install must consume the configured Cargo target directory"
+    );
+}
+
+#[test]
+fn rpm_cache_is_ci_only_and_release_remains_uncached() {
+    let ci = read_file(".github/workflows/ci.yml");
+    let release = read_file(".github/workflows/release.yml");
+    let rpm = job_block(&ci, "test_rpm", Some("test"));
+
+    assert!(
+        rpm.contains("-e JAME_PROMPT_RPM_CARGO_TARGET_DIR=/workspace/target/rpm-cargo"),
+        "CI RPM container must explicitly opt into the persistent Cargo target"
+    );
+    assert!(
+        !release.contains("actions/cache/"),
+        "Release workflow must not gain cache actions from the CI optimization"
+    );
+    assert!(
+        !release.contains("JAME_PROMPT_RPM_CARGO_TARGET_DIR"),
+        "Release workflow must retain its existing uncached RPM builder behavior"
     );
 }
