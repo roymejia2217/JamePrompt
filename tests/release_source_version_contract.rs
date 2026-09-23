@@ -124,7 +124,6 @@ fn contributor_contract_separates_preparation_from_publication() {
     }
 }
 
-
 #[test]
 fn tracked_release_candidate_identity_is_v1_2_0_beta_10() {
     let cargo = read_file("Cargo.toml");
@@ -155,7 +154,6 @@ fn tracked_release_candidate_identity_is_v1_2_0_beta_10() {
         "CHANGELOG must contain the prepared beta.10 release block"
     );
 }
-
 
 #[test]
 fn beta_10_release_notes_freeze_fixed_entries_and_reset_unreleased() {
