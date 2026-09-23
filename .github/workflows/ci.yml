@@ -308,11 +308,19 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Restore RPM Cargo build cache
+        id: rpm-cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/rpm-cargo
+          key: rpm-cargo-fedora44-43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'packaging/rpm/jame-prompt.spec', 'scripts/build_rpm_fedora.sh') }}
+
       - name: Build RPM package in pinned Fedora container
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
+            -e JAME_PROMPT_RPM_CARGO_TARGET_DIR=/workspace/target/rpm-cargo \
             fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80 \
             bash scripts/build_rpm_fedora.sh
 
@@ -329,6 +337,13 @@ jobs:
             -w /workspace \
             fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80 \
             bash scripts/validate_rpm_package.sh "$RPM_PATH"
+
+      - name: Save RPM Cargo build cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rpm-cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/rpm-cargo
+          key: ${{ steps.rpm-cargo-cache.outputs.cache-primary-key }}
 
   test:
     if: always()
