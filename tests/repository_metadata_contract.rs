@@ -315,3 +315,38 @@ fn unreleased_metadata_tracks_native_autopaste_fix_as_fixed() {
         );
     }
 }
+
+
+#[test]
+fn unreleased_native_autopaste_fix_claim_matches_runtime_contract() {
+    let ui = read_file("src/ui.rs");
+    let native = read_file("src/hotkeys/native.rs");
+
+    for required in [
+        "NativeClipboardPrepared",
+        "clipboard_matches_expected_prompt",
+        "iced::clipboard::write(content).chain(",
+        "paste_from_prepared_clipboard()",
+    ] {
+        assert!(
+            ui.contains(required),
+            "native auto-paste changelog claim requires UI runtime behavior: {}",
+            required
+        );
+    }
+
+    for required in [
+        "simulate(&EventType::KeyPress(RdevKey::ControlLeft)).is_ok()",
+        "simulate(&EventType::KeyPress(RdevKey::KeyV)).is_ok()",
+        "simulate(&EventType::KeyRelease(RdevKey::KeyV)).is_ok()",
+        "simulate(&EventType::KeyRelease(RdevKey::ControlLeft)).is_ok()",
+        "PasteOutcome::Completed",
+        "PasteOutcome::Failed",
+    ] {
+        assert!(
+            native.contains(required),
+            "native auto-paste changelog claim requires injection outcome tracking: {}",
+            required
+        );
+    }
+}
