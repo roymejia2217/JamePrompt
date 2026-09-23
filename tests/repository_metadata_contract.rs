@@ -295,7 +295,6 @@ fn readme_backup_scope_matches_serialized_product_contract() {
     );
 }
 
-
 #[test]
 fn release_metadata_tracks_native_autopaste_fix_as_fixed() {
     let changelog = read_file("CHANGELOG.md");
@@ -356,7 +355,6 @@ fn unreleased_native_autopaste_fix_claim_matches_runtime_contract() {
     }
 }
 
-
 #[test]
 fn release_metadata_tracks_packaged_linux_x11_runtime_fix_as_fixed() {
     let changelog = read_file("CHANGELOG.md");
@@ -415,7 +413,6 @@ fn unreleased_linux_x11_runtime_fix_claim_matches_packaging_contract() {
         );
     }
 }
-
 
 #[test]
 fn release_metadata_tracks_windows_msi_lifecycle_fix_as_fixed() {
