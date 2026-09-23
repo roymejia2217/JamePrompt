@@ -155,3 +155,75 @@ fn tracked_release_candidate_identity_is_v1_2_0_beta_10() {
         "CHANGELOG must contain the prepared beta.10 release block"
     );
 }
+
+
+#[test]
+fn beta_10_release_notes_freeze_fixed_entries_and_reset_unreleased() {
+    let changelog = read_file("CHANGELOG.md");
+    let beta_heading = "## [1.2.0-beta.10] - 2026-09-23";
+    assert_eq!(
+        changelog.matches(beta_heading).count(),
+        1,
+        "beta.10 release block must exist exactly once"
+    );
+
+    let unreleased = changelog
+        .split("## [Unreleased]")
+        .nth(1)
+        .expect("CHANGELOG must define Unreleased")
+        .split(beta_heading)
+        .next()
+        .expect("Unreleased must precede beta.10");
+    let beta = changelog
+        .split(beta_heading)
+        .nth(1)
+        .expect("CHANGELOG must define beta.10");
+
+    let fixed_entries = [
+        "Fix native global-hotkey auto-paste to verify the prompt is on the clipboard before Ctrl+V injection and report injection failures instead of assuming success.",
+        "Fix packaged Linux X11 hotkeys and auto-paste by declaring or bundling the libxkbcommon-x11 runtime required for X11 keyboard mapping.",
+        "Fix the Windows MSI install lifecycle by separating machine installation state from the per-user Start Menu shortcut state and verifying both are removed on uninstall.",
+    ];
+
+    for entry in fixed_entries {
+        assert!(
+            !unreleased.contains(entry),
+            "released beta.10 fix must not remain duplicated in Unreleased: {entry}"
+        );
+        assert!(
+            beta.contains(entry),
+            "beta.10 release notes must include prepared fix: {entry}"
+        );
+    }
+
+    let unreleased_fixed = unreleased
+        .split("### Fixed")
+        .nth(1)
+        .expect("Unreleased must define Fixed")
+        .split("### Security")
+        .next()
+        .expect("Unreleased Fixed must precede Security");
+    assert!(
+        unreleased_fixed.contains("- None."),
+        "Unreleased/Fixed must reset after freezing beta.10 notes"
+    );
+
+    let mut previous = 0usize;
+    for category in [
+        "### Added",
+        "### Changed",
+        "### Deprecated",
+        "### Removed",
+        "### Fixed",
+        "### Security",
+    ] {
+        let position = beta
+            .find(category)
+            .unwrap_or_else(|| panic!("beta.10 release notes missing category: {category}"));
+        assert!(
+            position >= previous,
+            "beta.10 Keep a Changelog categories must remain ordered"
+        );
+        previous = position;
+    }
+}
