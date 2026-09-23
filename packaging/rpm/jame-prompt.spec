@@ -1,6 +1,6 @@
 Name:           jame-prompt
-Version:        1.1.0
-Release:        1%{?dist}
+Version:        1.2.0
+Release:        0.1.beta.10%{?dist}
 Summary:        JamePrompt lightweight local prompt manager
 
 License:        MIT
