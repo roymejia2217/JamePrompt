@@ -464,6 +464,17 @@ def fixture_workflows() -> tuple[dict[str, Any], dict[str, Any]]:
                     "run": "scripts/install_appimage_tools.sh",
                 }
             )
+        if contract.release_job == "windows":
+            ci_steps.append(
+                {
+                    "name": "Install Rust toolchain",
+                    "uses": "dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87",
+                    "with": {
+                        "toolchain": "1.98.1",
+                        "targets": "x86_64-pc-windows-msvc",
+                    },
+                }
+            )
         ci_jobs[contract.ci_job] = {"steps": ci_steps}
         release_steps = [
             {
@@ -486,6 +497,18 @@ def fixture_workflows() -> tuple[dict[str, Any], dict[str, Any]]:
                 for index, name in enumerate(contract.release_order)
             ],
         ]
+        if contract.release_job == "windows":
+            release_steps.insert(
+                2,
+                {
+                    "name": "Install Rust toolchain",
+                    "uses": "dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87",
+                    "with": {
+                        "toolchain": "1.98.1",
+                        "targets": "x86_64-pc-windows-msvc",
+                    },
+                },
+            )
         release_jobs[contract.release_job] = {"steps": release_steps}
 
     ci_jobs["test"] = {"needs": sorted(CI_AGGREGATE_NEEDS), "steps": []}
@@ -578,6 +601,25 @@ def fixture_workflows() -> tuple[dict[str, Any], dict[str, Any]]:
 def run_self_test() -> None:
     ci, release = fixture_workflows()
     validate_parity(ci, release)
+
+    broken_ci, broken_release = fixture_workflows()
+    ci_windows_toolchain = step_by_name(
+        broken_ci["jobs"]["test-windows"],
+        "Install Rust toolchain",
+        "CI/windows",
+    )
+    ci_windows_toolchain["with"]["toolchain"] = "stable"
+    try:
+        validate_parity(broken_ci, broken_release)
+    except ParityError as error:
+        if "Windows Rust toolchain identity" not in str(error):
+            raise AssertionError(
+                "Windows toolchain identity failure was not attributed correctly"
+            ) from error
+    else:
+        raise AssertionError(
+            "moving stable Windows toolchain must fail parity validation"
+        )
 
     broken_ci, broken_release = fixture_workflows()
     rpm_steps = broken_release["jobs"]["rpm"]["steps"]
