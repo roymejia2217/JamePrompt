@@ -418,3 +418,41 @@ fn unreleased_linux_x11_runtime_fix_claim_matches_packaging_contract() {
         );
     }
 }
+
+
+#[test]
+fn unreleased_metadata_tracks_windows_msi_lifecycle_fix_as_fixed() {
+    let changelog = read_file("CHANGELOG.md");
+    let unreleased = changelog
+        .split("## [Unreleased]")
+        .nth(1)
+        .expect("CHANGELOG must define Unreleased");
+    let fixed = unreleased
+        .split("### Fixed")
+        .nth(1)
+        .expect("Unreleased must define Fixed")
+        .split("### Security")
+        .next()
+        .expect("Fixed must precede Security");
+
+    let entry = "Fix the Windows MSI install lifecycle by separating machine installation state from the per-user Start Menu shortcut state and verifying both are removed on uninstall.";
+
+    assert!(
+        fixed.contains(entry),
+        "Unreleased/Fixed must record the Windows MSI lifecycle correction"
+    );
+
+    for category in ["### Added", "### Changed"] {
+        let section = unreleased
+            .split(category)
+            .nth(1)
+            .expect("Unreleased category must exist")
+            .split("###")
+            .next()
+            .expect("category must have a bounded section");
+        assert!(
+            !section.contains(entry),
+            "Windows MSI lifecycle correction must be classified as Fixed, not {category}"
+        );
+    }
+}
