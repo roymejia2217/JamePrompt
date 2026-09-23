@@ -649,6 +649,44 @@ def run_self_test() -> None:
         )
 
     broken_ci, broken_release = fixture_workflows()
+    release_windows_toolchain = step_by_name(
+        broken_release["jobs"]["windows"],
+        "Install Rust toolchain",
+        "Release/windows",
+    )
+    release_windows_toolchain["with"]["toolchain"] = "stable"
+    try:
+        validate_parity(broken_ci, broken_release)
+    except ParityError as error:
+        if "Windows Rust toolchain identity" not in str(error):
+            raise AssertionError(
+                "Release Windows toolchain drift was not attributed correctly"
+            ) from error
+    else:
+        raise AssertionError(
+            "moving stable Release Windows toolchain must fail parity validation"
+        )
+
+    broken_ci, broken_release = fixture_workflows()
+    ci_windows_toolchain = step_by_name(
+        broken_ci["jobs"]["test-windows"],
+        "Install Rust toolchain",
+        "CI/windows",
+    )
+    ci_windows_toolchain["uses"] = "dtolnay/rust-toolchain@stable"
+    try:
+        validate_parity(broken_ci, broken_release)
+    except ParityError as error:
+        if "Windows Rust toolchain identity" not in str(error):
+            raise AssertionError(
+                "Windows toolchain action drift was not attributed correctly"
+            ) from error
+    else:
+        raise AssertionError(
+            "moving Windows toolchain action reference must fail parity validation"
+        )
+
+    broken_ci, broken_release = fixture_workflows()
     rpm_steps = broken_release["jobs"]["rpm"]["steps"]
     rpm_validator_step = next(
         step
