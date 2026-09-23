@@ -70,6 +70,11 @@ fi
 RPM_TOPDIR="$PWD/target/rpmbuild"
 mkdir -p "$RPM_TOPDIR"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
 
+if [[ -n "${JAME_PROMPT_RPM_CARGO_TARGET_DIR:-}" ]]; then
+    mkdir -p "$JAME_PROMPT_RPM_CARGO_TARGET_DIR"
+    export CARGO_TARGET_DIR="$JAME_PROMPT_RPM_CARGO_TARGET_DIR"
+fi
+
 tar -czf "$RPM_TOPDIR/SOURCES/jame-prompt-${RPM_VERSION}.tar.gz" \
     --exclude="./target" \
     --exclude="./.git" \

@@ -53,7 +53,7 @@ cargo test --release --locked --bin %{name}
 desktop-file-validate packaging/linux/jame-prompt.desktop
 
 %install
-install -Dm755 target/release/%{name} %{buildroot}%{_bindir}/%{name}
+install -Dm755 "${CARGO_TARGET_DIR:-target}/release/%{name}" %{buildroot}%{_bindir}/%{name}
 install -Dm644 packaging/linux/jame-prompt.desktop \
   %{buildroot}%{_datadir}/applications/%{desktop_app_id}.desktop
 install -Dm644 packaging/linux/jame-prompt.1 %{buildroot}%{_mandir}/man1/%{name}.1
