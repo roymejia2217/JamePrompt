@@ -159,8 +159,7 @@ fn rpm_cache_actions_remain_supply_chain_pinned() {
         "RPM CI must contain exactly one pinned cache restore action"
     );
     assert_eq!(
-        rpm.matches(&format!("actions/cache/save@{pinned}"))
-            .count(),
+        rpm.matches(&format!("actions/cache/save@{pinned}")).count(),
         1,
         "RPM CI must contain exactly one pinned cache save action"
     );
