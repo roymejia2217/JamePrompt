@@ -204,7 +204,9 @@ jobs:
 
       - name: Validate MSI install and uninstall
         shell: pwsh
-        run: ./scripts/validate_windows_msi.ps1 -MsiPath ./target/wix/JamePrompt-1.1.0-x64.msi
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          ./scripts/validate_windows_msi.ps1 -MsiPath "./target/wix/JamePrompt-$version-x64.msi"
 
   test_deb:
     runs-on: ubuntu-latest
