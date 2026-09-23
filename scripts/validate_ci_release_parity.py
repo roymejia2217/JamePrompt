@@ -127,6 +127,8 @@ RELEASE_REQUIRED_NEEDS = {
     "windows",
 }
 UNSAFE_RELEASE_REF_CHECKOUT = "ref: ${{ env.RELEASE_REF }}"
+WINDOWS_RUST_TOOLCHAIN = "1.98.1"
+WINDOWS_RUST_TOOLCHAIN_ACTION = "dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87"
 
 
 def load_workflow(path: Path) -> dict[str, Any]:
@@ -271,6 +273,31 @@ def validate_parity(ci: dict[str, Any], release: dict[str, Any]) -> None:
                 ):
                     raise ParityError(
                         f"{source}: AppImage tool installer must not receive GitHub token"
+                    )
+        if platform == "windows":
+            for source, windows_job in (
+                ("CI/windows", ci_job),
+                ("Release/windows", release_job),
+            ):
+                toolchain_step = step_by_name(
+                    windows_job,
+                    "Install Rust toolchain",
+                    source,
+                )
+                if toolchain_step.get("uses") != WINDOWS_RUST_TOOLCHAIN_ACTION:
+                    raise ParityError(
+                        f"{source}: Windows Rust toolchain identity must use "
+                        f"{WINDOWS_RUST_TOOLCHAIN_ACTION}"
+                    )
+                toolchain_with = toolchain_step.get("with")
+                if not isinstance(toolchain_with, dict):
+                    raise ParityError(
+                        f"{source}: Windows Rust toolchain identity requires explicit inputs"
+                    )
+                if str(toolchain_with.get("toolchain", "")) != WINDOWS_RUST_TOOLCHAIN:
+                    raise ParityError(
+                        f"{source}: Windows Rust toolchain identity must be "
+                        f"{WINDOWS_RUST_TOOLCHAIN}"
                     )
         require_tokens(
             job_text(ci_job),
