@@ -123,3 +123,35 @@ fn contributor_contract_separates_preparation_from_publication() {
         );
     }
 }
+
+
+#[test]
+fn tracked_release_candidate_identity_is_v1_2_0_beta_10() {
+    let cargo = read_file("Cargo.toml");
+    let lock = read_file("Cargo.lock");
+    let arch = read_file("packaging/arch/PKGBUILD");
+    let rpm = read_file("packaging/rpm/jame-prompt.spec");
+    let changelog = read_file("CHANGELOG.md");
+
+    assert!(
+        cargo.contains("version = \"1.2.0-beta.10\""),
+        "Cargo package version must match v1.2.0-beta.10"
+    );
+    assert!(
+        lock.contains("[[package]]\nname = \"jame-prompt\"\nversion = \"1.2.0-beta.10\""),
+        "Cargo.lock package version must match v1.2.0-beta.10"
+    );
+    assert!(
+        arch.contains("pkgver=1.2.0beta.10") && arch.contains("pkgrel=1"),
+        "Arch metadata must match v1.2.0-beta.10"
+    );
+    assert!(
+        rpm.contains("Version:        1.2.0")
+            && rpm.contains("Release:        0.1.beta.10%{?dist}"),
+        "RPM metadata must match v1.2.0-beta.10"
+    );
+    assert!(
+        changelog.contains("## [1.2.0-beta.10] - 2026-09-23"),
+        "CHANGELOG must contain the prepared beta.10 release block"
+    );
+}
