@@ -51,6 +51,7 @@ Requires Rust 1.88 or newer. Iced is pinned to 0.14.0; build with `--locked`.
 | **Theme settings** | Persists Light and Dark theme selection in `settings.json`. |
 | **Autostart** | Syncs desktop autostart from the settings screen on Linux and Windows. |
 | **Data migration** | Migrates existing data from the previous `prompt-manager` data directory when available. |
+| **Prompt backup** | Exports prompts to schema-versioned JSON and imports backups with merge/replace and duplicate handling. |
 
 ---
 
@@ -152,11 +153,13 @@ This produces the release binary at `target/release/jame-prompt`.
 4. Select a prompt to copy its content to the clipboard.
 5. Close the window to keep the app running in the system tray.
 6. Restore the window from the tray icon or tray menu when needed.
-7. Quit from the tray menu when the background process should stop.
+7. Open Settings and use **Export prompts** to write a JSON backup or **Import prompts** to review and restore a backup.
+8. Quit from the tray menu when the background process should stop.
 
 **Notes:**
 - `--start-minimized` launches the app hidden.
 - Prompts are stored in `prompts.db` and settings are stored in `settings.json` inside the application data directory.
+- Prompt backups contain prompt records only; settings remain in `settings.json` and are not included in the JSON backup.
 - Existing data from the older `prompt-manager` data directory is migrated automatically when present.
 
 ---
@@ -215,44 +218,25 @@ The build orchestrator cleans `target/`, builds the release binary, and then run
 ## Project Structure
 
 ```text
-prompt-manager-rust/
+JamePrompt/
 ├── assets/
-│   ├── icons/
-│   │   ├── app_icon.png
-│   │   ├── tray_icon.png
-│   │   └── hicolor/
-│   └── images/
-│       ├── app_logo_dark.png
-│       └── app_logo_light.png
 ├── docs/
-│   ├── banner.webp
-│   └── screenshots/
-│       ├── about_window.webp
-│       ├── favorites_filter.webp
-│       ├── main_window.webp
-│       ├── main_window_min.webp
-│       ├── prompt_editor.webp
-│       ├── settings_window.webp
-│       └── system_tray.webp
 ├── fonts/
-│   ├── icons.toml
-│   └── lucide.ttf
 ├── packaging/
 │   ├── appimage/
-│   │   └── build-appimage.sh
 │   ├── arch/
-│   │   └── PKGBUILD
 │   ├── linux/
-│   │   ├── build-deb.sh
-│   │   ├── changelog
-│   │   ├── copyright
-│   │   ├── jame-prompt.1
-│   │   ├── jame-prompt.desktop
-│   │   └── scripts/
 │   └── rpm/
-│       └── jame-prompt.spec
 ├── scripts/
 ├── src/
+│   ├── application/
+│   │   ├── mod.rs
+│   │   └── notification_store.rs
+│   ├── domain/
+│   │   ├── mod.rs
+│   │   ├── notification.rs
+│   │   └── notification_policy.rs
+│   ├── hotkeys/
 │   ├── autostart.rs
 │   ├── config.rs
 │   ├── db.rs
@@ -264,15 +248,15 @@ prompt-manager-rust/
 │   ├── models.rs
 │   ├── perf.rs
 │   ├── perf_smoke.rs
+│   ├── platform.rs
+│   ├── prompt_backup.rs
 │   ├── prompt_repository.rs
 │   ├── prompt_service.rs
 │   ├── settings_service.rs
 │   ├── tray.rs
-│   └── ui.rs
+│   ├── ui.rs
+│   └── window_lifecycle.rs
 ├── tests/
-│   ├── build_orchestrator.rs
-│   ├── packaging_metadata.rs
-│   └── ui_smoke.rs
 ├── build.rs
 ├── build.sh
 ├── Cargo.toml
