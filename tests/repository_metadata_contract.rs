@@ -224,3 +224,27 @@ fn protected_and_local_gates_self_test_repository_metadata_contracts() {
         );
     }
 }
+
+
+#[test]
+fn readme_documents_published_backup_and_current_architecture() {
+    let readme = read_file("README.md");
+
+    for required in [
+        "Prompt backup",
+        "Export prompts",
+        "Import prompts",
+        "JSON",
+        "src/application/",
+        "src/domain/",
+        "platform.rs",
+        "prompt_backup.rs",
+        "window_lifecycle.rs",
+    ] {
+        assert!(
+            readme.contains(required),
+            "README must document published product/architecture contract: {}",
+            required
+        );
+    }
+}
