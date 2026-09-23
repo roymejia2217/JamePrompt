@@ -67,7 +67,7 @@ fn rpm_builder_uses_persistent_dedicated_cargo_target() {
     let spec = read_file("packaging/rpm/jame-prompt.spec");
 
     assert!(
-        builder.contains("if [[ -n \"\${JAME_PROMPT_RPM_CARGO_TARGET_DIR:-}\" ]]; then"),
+        builder.contains(r#"if [[ -n "${JAME_PROMPT_RPM_CARGO_TARGET_DIR:-}" ]]; then"#),
         "RPM builder must make persistent Cargo output an explicit opt-in"
     );
     assert!(
@@ -75,7 +75,7 @@ fn rpm_builder_uses_persistent_dedicated_cargo_target() {
         "RPM builder must export the opt-in Cargo target directory to rpmbuild"
     );
     assert!(
-        spec.contains("\${CARGO_TARGET_DIR:-target}/release/%{name}"),
+        spec.contains(r#"${CARGO_TARGET_DIR:-target}/release/%{name}"#),
         "RPM install must consume the configured Cargo target directory"
     );
 }
