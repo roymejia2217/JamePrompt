@@ -649,6 +649,25 @@ def run_self_test() -> None:
 
 
     broken_ci, broken_release = fixture_workflows()
+    appimage_checkout = step_by_name(
+        broken_release["jobs"]["appimage"],
+        "Checkout",
+        "Release/appimage",
+    )
+    appimage_checkout["with"]["persist-credentials"] = True
+    try:
+        validate_parity(broken_ci, broken_release)
+    except ParityError as error:
+        if "builder checkout must disable persisted credentials" not in str(error):
+            raise AssertionError(
+                "builder credential failure was not attributed correctly"
+            ) from error
+    else:
+        raise AssertionError(
+            "release builder with persisted credentials must fail parity validation"
+        )
+
+    broken_ci, broken_release = fixture_workflows()
     release_gate_checkout = step_by_name(
         broken_release["jobs"]["release-gate"],
         "Checkout trusted release gate tooling",
