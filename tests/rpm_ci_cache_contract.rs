@@ -1,8 +1,7 @@
 use std::path::{Path, PathBuf};
 
 const CACHE_ACTION_SHA: &str = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
-const FEDORA_DIGEST: &str =
-    "43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80";
+const FEDORA_DIGEST: &str = "43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80";
 
 fn repo_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
@@ -154,12 +153,14 @@ fn rpm_cache_actions_remain_supply_chain_pinned() {
 
     let pinned = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
     assert_eq!(
-        rpm.matches(&format!("actions/cache/restore@{pinned}")).count(),
+        rpm.matches(&format!("actions/cache/restore@{pinned}"))
+            .count(),
         1,
         "RPM CI must contain exactly one pinned cache restore action"
     );
     assert_eq!(
-        rpm.matches(&format!("actions/cache/save@{pinned}")).count(),
+        rpm.matches(&format!("actions/cache/save@{pinned}"))
+            .count(),
         1,
         "RPM CI must contain exactly one pinned cache save action"
     );
