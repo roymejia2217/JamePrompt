@@ -49,3 +49,18 @@ fn rpm_workflows_keep_full_build_and_check_path() {
         "Release must retain the Fedora RPM builder"
     );
 }
+
+
+#[test]
+fn rpm_check_does_not_regress_to_duplicate_debug_compilation() {
+    let spec = read_file("packaging/rpm/jame-prompt.spec");
+
+    assert!(
+        !spec.contains("cargo test --locked --bin %{name}"),
+        "RPM %check must not trigger a second debug-profile dependency build"
+    );
+    assert!(
+        spec.contains("%check"),
+        "RPM package must retain an explicit %check phase"
+    );
+}
