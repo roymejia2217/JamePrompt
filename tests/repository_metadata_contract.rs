@@ -386,3 +386,37 @@ fn unreleased_metadata_tracks_packaged_linux_x11_runtime_fix_as_fixed() {
         );
     }
 }
+
+
+#[test]
+fn unreleased_linux_x11_runtime_fix_claim_matches_packaging_contract() {
+    let deb = read_file("packaging/linux/build-deb.sh");
+    let arch = read_file("packaging/arch/PKGBUILD");
+    let rpm = read_file("packaging/rpm/jame-prompt.spec");
+    let appimage = read_file("packaging/appimage/build-appimage.sh");
+
+    assert!(
+        deb.contains("libxkbcommon-x11-0"),
+        "Debian package must declare the X11 keyboard runtime"
+    );
+    assert!(
+        arch.contains("'libxkbcommon-x11'"),
+        "Arch package must declare the X11 keyboard runtime"
+    );
+    assert!(
+        rpm.contains("Requires:       libxkbcommon-x11"),
+        "RPM package must declare the X11 keyboard runtime"
+    );
+
+    for required in [
+        "libxkbcommon-x11.so.0",
+        "--library \"$XKBCOMMON_X11_LIB\"",
+        "AppImage is missing bundled libxkbcommon-x11",
+    ] {
+        assert!(
+            appimage.contains(required),
+            "AppImage must bundle and verify the X11 keyboard runtime: {}",
+            required
+        );
+    }
+}
