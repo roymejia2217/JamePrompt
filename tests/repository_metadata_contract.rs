@@ -11,6 +11,27 @@ fn read_file(relative: &str) -> String {
         .replace("\r\n", "\n")
 }
 
+
+fn release_block_for<'a>(changelog: &'a str, heading: &str) -> &'a str {
+    changelog
+        .split(heading)
+        .nth(1)
+        .unwrap_or_else(|| panic!("CHANGELOG must define release heading: {heading}"))
+        .split("\n## [")
+        .next()
+        .expect("release block must terminate")
+}
+
+fn release_fixed_section_for<'a>(changelog: &'a str, heading: &str) -> &'a str {
+    release_block_for(changelog, heading)
+        .split("### Fixed")
+        .nth(1)
+        .expect("release block must define Fixed")
+        .split("### Security")
+        .next()
+        .expect("Fixed must precede Security")
+}
+
 #[test]
 fn commit_messages_use_conventional_commits_with_required_body() {
     let config = read_file("commitlint.config.cjs");
@@ -274,37 +295,23 @@ fn readme_backup_scope_matches_serialized_product_contract() {
     );
 }
 
-#[test]
-fn unreleased_metadata_tracks_native_autopaste_fix_as_fixed() {
-    let changelog = read_file("CHANGELOG.md");
-    let unreleased = changelog
-        .split("## [Unreleased]")
-        .nth(1)
-        .expect("CHANGELOG must define Unreleased");
-    let fixed = unreleased
-        .split("### Fixed")
-        .nth(1)
-        .expect("Unreleased must define Fixed")
-        .split("### Security")
-        .next()
-        .expect("Fixed must precede Security");
 
+#[test]
+fn release_metadata_tracks_native_autopaste_fix_as_fixed() {
+    let changelog = read_file("CHANGELOG.md");
+    let release = release_block_for(&changelog, "## [1.2.0-beta.10] - 2026-09-23");
+    let fixed = release_fixed_section_for(&changelog, "## [1.2.0-beta.10] - 2026-09-23");
     let entry = "Fix native global-hotkey auto-paste to verify the prompt is on the clipboard before Ctrl+V injection and report injection failures instead of assuming success.";
 
     assert!(
         fixed.contains(entry),
-        "Unreleased/Fixed must record the native auto-paste behavior correction"
+        "beta.10/Fixed must record the native auto-paste behavior correction"
     );
-    assert!(
-        !fixed.contains("- None."),
-        "Unreleased/Fixed must not remain empty after a shipped behavior correction"
-    );
-
     for category in ["### Added", "### Changed"] {
-        let section = unreleased
+        let section = release
             .split(category)
             .nth(1)
-            .expect("Unreleased category must exist")
+            .expect("release category must exist")
             .split("###")
             .next()
             .expect("category must have a bounded section");
@@ -349,33 +356,23 @@ fn unreleased_native_autopaste_fix_claim_matches_runtime_contract() {
     }
 }
 
-#[test]
-fn unreleased_metadata_tracks_packaged_linux_x11_runtime_fix_as_fixed() {
-    let changelog = read_file("CHANGELOG.md");
-    let unreleased = changelog
-        .split("## [Unreleased]")
-        .nth(1)
-        .expect("CHANGELOG must define Unreleased");
-    let fixed = unreleased
-        .split("### Fixed")
-        .nth(1)
-        .expect("Unreleased must define Fixed")
-        .split("### Security")
-        .next()
-        .expect("Fixed must precede Security");
 
+#[test]
+fn release_metadata_tracks_packaged_linux_x11_runtime_fix_as_fixed() {
+    let changelog = read_file("CHANGELOG.md");
+    let release = release_block_for(&changelog, "## [1.2.0-beta.10] - 2026-09-23");
+    let fixed = release_fixed_section_for(&changelog, "## [1.2.0-beta.10] - 2026-09-23");
     let entry = "Fix packaged Linux X11 hotkeys and auto-paste by declaring or bundling the libxkbcommon-x11 runtime required for X11 keyboard mapping.";
 
     assert!(
         fixed.contains(entry),
-        "Unreleased/Fixed must record the packaged Linux X11 runtime correction"
+        "beta.10/Fixed must record the packaged Linux X11 runtime correction"
     );
-
     for category in ["### Added", "### Changed"] {
-        let section = unreleased
+        let section = release
             .split(category)
             .nth(1)
-            .expect("Unreleased category must exist")
+            .expect("release category must exist")
             .split("###")
             .next()
             .expect("category must have a bounded section");
@@ -419,33 +416,23 @@ fn unreleased_linux_x11_runtime_fix_claim_matches_packaging_contract() {
     }
 }
 
-#[test]
-fn unreleased_metadata_tracks_windows_msi_lifecycle_fix_as_fixed() {
-    let changelog = read_file("CHANGELOG.md");
-    let unreleased = changelog
-        .split("## [Unreleased]")
-        .nth(1)
-        .expect("CHANGELOG must define Unreleased");
-    let fixed = unreleased
-        .split("### Fixed")
-        .nth(1)
-        .expect("Unreleased must define Fixed")
-        .split("### Security")
-        .next()
-        .expect("Fixed must precede Security");
 
+#[test]
+fn release_metadata_tracks_windows_msi_lifecycle_fix_as_fixed() {
+    let changelog = read_file("CHANGELOG.md");
+    let release = release_block_for(&changelog, "## [1.2.0-beta.10] - 2026-09-23");
+    let fixed = release_fixed_section_for(&changelog, "## [1.2.0-beta.10] - 2026-09-23");
     let entry = "Fix the Windows MSI install lifecycle by separating machine installation state from the per-user Start Menu shortcut state and verifying both are removed on uninstall.";
 
     assert!(
         fixed.contains(entry),
-        "Unreleased/Fixed must record the Windows MSI lifecycle correction"
+        "beta.10/Fixed must record the Windows MSI lifecycle correction"
     );
-
     for category in ["### Added", "### Changed"] {
-        let section = unreleased
+        let section = release
             .split(category)
             .nth(1)
-            .expect("Unreleased category must exist")
+            .expect("release category must exist")
             .split("###")
             .next()
             .expect("category must have a bounded section");
