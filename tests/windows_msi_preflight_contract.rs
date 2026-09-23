@@ -164,3 +164,31 @@ fn msi_builder_accepts_supported_release_profile_prereleases() {
         "MSI builder must not reject supported alpha/beta source versions"
     );
 }
+
+
+#[test]
+fn msi_builder_prerelease_support_remains_fail_closed() {
+    let builder = read_file("scripts/build_windows_msi.ps1");
+
+    for required in [
+        "$Version -notmatch $SupportedVersionPattern",
+        "supported stable/alpha/beta SemVer package version",
+        "\"--no-build\"",
+        "JamePrompt-$Version-x64.msi",
+    ] {
+        assert!(
+            builder.contains(required),
+            "MSI prerelease support must preserve fail-closed builder behavior: {}",
+            required
+        );
+    }
+
+    assert!(
+        builder.contains("(?:alpha|beta)"),
+        "MSI prerelease support must remain scoped to the repository release profile"
+    );
+    assert!(
+        !builder.contains("(?:alpha|beta|rc)"),
+        "MSI builder must not silently expand the release profile to rc"
+    );
+}
