@@ -129,8 +129,6 @@ jobs:
         run: xvfb-run -a -s "-screen 0 1280x800x24" bash scripts/smoke/native-hotkey-x11.sh target/debug/jame-prompt
 
       - name: Install verified AppImage tools
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           TOOL_DIR="$RUNNER_TEMP/jameprompt-appimage-tools"
           scripts/install_appimage_tools.sh "$TOOL_DIR"

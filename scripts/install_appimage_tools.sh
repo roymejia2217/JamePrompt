@@ -6,6 +6,7 @@ LINUXDEPLOY_ASSET_ID="538917371"
 LINUXDEPLOY_SHA256="36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62"
 APPIMAGETOOL_ASSET_ID="324406736"
 APPIMAGETOOL_SHA256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+GITHUB_API_VERSION="2026-03-10"
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || {
@@ -21,9 +22,13 @@ download_verified_tool() {
     output="$4"
     temp_file="$(mktemp)"
 
-    if ! gh api --method GET \
+    if ! curl --fail --location --silent --show-error \
+        --proto '=https' \
+        --tlsv1.2 \
         -H "Accept: application/octet-stream" \
-        "repos/${repo}/releases/assets/${asset_id}" >"$temp_file"; then
+        -H "X-GitHub-Api-Version: ${GITHUB_API_VERSION}" \
+        "https://api.github.com/repos/${repo}/releases/assets/${asset_id}" \
+        --output "$temp_file"; then
         rm -f "$temp_file"
         return 1
     fi
@@ -33,7 +38,7 @@ download_verified_tool() {
     rm -f "$temp_file"
 }
 
-for command_name in gh sha256sum install mktemp; do
+for command_name in curl sha256sum install mktemp; do
     require_command "$command_name"
 done
 
