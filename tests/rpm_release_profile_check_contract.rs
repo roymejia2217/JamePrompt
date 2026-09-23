@@ -50,7 +50,6 @@ fn rpm_workflows_keep_full_build_and_check_path() {
     );
 }
 
-
 #[test]
 fn rpm_check_does_not_regress_to_duplicate_debug_compilation() {
     let spec = read_file("packaging/rpm/jame-prompt.spec");
