@@ -72,7 +72,6 @@ fn pull_request_target_checkout_is_base_bound_and_tokenless() {
     }
 }
 
-
 #[test]
 fn nonrelease_workflows_reject_explicit_token_reintroduction() {
     let ci = read_file(".github/workflows/ci.yml");
