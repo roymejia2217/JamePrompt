@@ -64,6 +64,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
 
       - name: Validate release source version
         run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --check
@@ -128,6 +129,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
 
       - name: Validate release source version
         run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --check
@@ -184,6 +186,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
 
       - name: Validate release source version
         run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --check
@@ -226,6 +229,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
 
       - name: Validate release source version
         run: python3 scripts/prepare_release_version.py --tag "$RELEASE_REF" --check
@@ -294,6 +298,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
 
       - name: Validate release source version
         shell: pwsh
