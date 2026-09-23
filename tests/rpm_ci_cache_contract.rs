@@ -99,3 +99,69 @@ fn rpm_cache_is_ci_only_and_release_remains_uncached() {
         "Release workflow must retain its existing uncached RPM builder behavior"
     );
 }
+
+
+#[test]
+fn rpm_cache_write_boundary_is_trusted_and_post_validation() {
+    let ci = read_file(".github/workflows/ci.yml");
+    let rpm = job_block(&ci, "test_rpm", Some("test"));
+
+    let restore = rpm
+        .find("- name: Restore RPM Cargo build cache")
+        .expect("RPM cache restore step");
+    let build = rpm
+        .find("- name: Build RPM package in pinned Fedora container")
+        .expect("RPM build step");
+    let verify = rpm
+        .find("- name: Verify RPM package artifact")
+        .expect("RPM verification step");
+    let save = rpm
+        .find("- name: Save RPM Cargo build cache")
+        .expect("RPM cache save step");
+
+    assert!(
+        restore < build && build < verify && verify < save,
+        "RPM cache must restore before build and save only after artifact validation"
+    );
+
+    for required in [
+        "if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rpm-cargo-cache.outputs.cache-hit != 'true'",
+        "uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0",
+        "key: ${{ steps.rpm-cargo-cache.outputs.cache-primary-key }}",
+    ] {
+        assert!(
+            rpm.contains(required),
+            "RPM cache save boundary missing trusted-main contract: {required}"
+        );
+    }
+
+    for forbidden in [
+        "restore-keys:",
+        "path: target/rpmbuild",
+        "path: ~/.cargo",
+        "path: /root/.cargo",
+    ] {
+        assert!(
+            !rpm.contains(forbidden),
+            "RPM cache must not broaden its trust or artifact surface: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn rpm_cache_actions_remain_supply_chain_pinned() {
+    let ci = read_file(".github/workflows/ci.yml");
+    let rpm = job_block(&ci, "test_rpm", Some("test"));
+
+    let pinned = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
+    assert_eq!(
+        rpm.matches(&format!("actions/cache/restore@{pinned}")).count(),
+        1,
+        "RPM CI must contain exactly one pinned cache restore action"
+    );
+    assert_eq!(
+        rpm.matches(&format!("actions/cache/save@{pinned}")).count(),
+        1,
+        "RPM CI must contain exactly one pinned cache save action"
+    );
+}
