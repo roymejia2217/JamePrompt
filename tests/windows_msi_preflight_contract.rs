@@ -169,7 +169,8 @@ fn msi_builder_prerelease_support_remains_fail_closed() {
     let builder = read_file("scripts/build_windows_msi.ps1");
 
     for required in [
-        "$Version -notmatch $SupportedVersionPattern",
+        "$Version -match $SupportedVersionPattern",
+        "$InstallerVersion = $Matches['base']",
         "supported stable/alpha/beta SemVer package version",
         "\"--no-build\"",
         "JamePrompt-$Version-x64.msi",
