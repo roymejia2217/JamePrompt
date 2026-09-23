@@ -456,3 +456,66 @@ fn unreleased_metadata_tracks_windows_msi_lifecycle_fix_as_fixed() {
         );
     }
 }
+
+
+#[test]
+fn unreleased_windows_msi_lifecycle_fix_claim_matches_installer_contract() {
+    let wix = read_file("wix/main.wxs");
+    let validator = read_file("scripts/validate_windows_msi.ps1");
+
+    assert!(
+        wix.contains("InstallScope=\"perMachine\""),
+        "MSI lifecycle claim requires a per-machine package"
+    );
+
+    let application_files = wix
+        .split("<Component Id=\"ApplicationFiles\"")
+        .nth(1)
+        .expect("WiX must define ApplicationFiles")
+        .split("</Component>")
+        .next()
+        .expect("ApplicationFiles component must terminate");
+    assert!(
+        application_files.contains("Root=\"HKLM\"")
+            && application_files.contains("Key=\"Software\\JamePrompt\"")
+            && application_files.contains("Name=\"installed\""),
+        "per-machine application component must own the HKLM installation marker"
+    );
+    assert!(
+        !application_files.contains("Root=\"HKCU\""),
+        "per-machine application component must not own per-user registry state"
+    );
+
+    let shortcut = wix
+        .split("<Component Id=\"ApplicationShortcut\"")
+        .nth(1)
+        .expect("WiX must define ApplicationShortcut")
+        .split("</Component>")
+        .next()
+        .expect("ApplicationShortcut component must terminate");
+    assert!(
+        shortcut.contains("Root=\"HKCU\"")
+            && shortcut.contains("Key=\"Software\\JamePrompt\"")
+            && shortcut.contains("Name=\"installed\"")
+            && shortcut.contains("KeyPath=\"yes\""),
+        "Start Menu shortcut component must preserve its HKCU registry KeyPath"
+    );
+    assert!(
+        !shortcut.contains("Root=\"HKLM\""),
+        "shortcut component must not mix per-user resources with machine registry state"
+    );
+
+    for required in [
+        "$MachineMarker = \"HKLM:\\SOFTWARE\\JamePrompt\"",
+        "$UserShortcutMarker = \"HKCU:\\SOFTWARE\\JamePrompt\"",
+        "MSI uninstall left machine registry marker behind",
+        "MSI uninstall left user shortcut registry marker behind",
+        "MSI uninstall left Start Menu shortcut behind",
+    ] {
+        assert!(
+            validator.contains(required),
+            "MSI lifecycle validator must enforce install/uninstall state: {}",
+            required
+        );
+    }
+}
