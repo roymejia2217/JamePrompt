@@ -124,7 +124,7 @@ def validate_evidence(
             and item.get("status") == "completed"
             and item.get("conclusion") == "success"
             and isinstance(path, str)
-            and path.startswith(f"{workflow_path}@")
+            and path == workflow_path
         ):
             matches.append(item)
 
@@ -156,7 +156,7 @@ def run_self_test() -> None:
         "id": 101,
         "run_number": 42,
         "name": "CI",
-        "path": ".github/workflows/ci.yml@refs/heads/main",
+        "path": ".github/workflows/ci.yml",
         "head_sha": sha,
         "head_branch": "main",
         "event": "push",
