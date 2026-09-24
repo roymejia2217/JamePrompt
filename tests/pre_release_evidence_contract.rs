@@ -100,7 +100,6 @@ fn protected_and_local_gates_self_test_release_evidence_contract() {
     );
 }
 
-
 #[test]
 fn release_evidence_matches_the_workflow_path_shape_returned_by_github_actions() {
     let validator = read_file("scripts/validate_main_ci_evidence.py");
