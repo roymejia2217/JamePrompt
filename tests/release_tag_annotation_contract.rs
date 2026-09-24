@@ -108,15 +108,12 @@ fn local_tag_is_removed_when_post_creation_validation_or_push_fails() {
     }
 }
 
-
 #[test]
 fn annotated_tag_creation_preserves_release_metadata_verbatim() {
     let tagger = read_file("scripts/create_release_tag.sh");
 
     assert!(
-        tagger.contains(
-            "git tag -a --cleanup=verbatim \"$tag\" -F \"$tag_message_file\""
-        ),
+        tagger.contains("git tag -a --cleanup=verbatim \"$tag\" -F \"$tag_message_file\""),
         "annotated tag creation must preserve Markdown release metadata verbatim"
     );
     assert!(
@@ -124,7 +121,6 @@ fn annotated_tag_creation_preserves_release_metadata_verbatim() {
         "annotated tag creation must not use Git's default comment-stripping cleanup"
     );
 }
-
 
 #[test]
 fn git_verbatim_cleanup_preserves_markdown_annotation_contents() {
