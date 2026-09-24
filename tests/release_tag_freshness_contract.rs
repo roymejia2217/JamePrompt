@@ -174,3 +174,38 @@ fn local_tag_absence_probe_returns_success_when_tag_is_absent() {
         "expected tag absence must not leak git rev-parse status through an && list"
     );
 }
+
+
+#[test]
+fn local_tag_absence_probe_still_rejects_an_existing_tag_before_success() {
+    let tagger = read_file("scripts/create_release_tag.sh");
+    let probe = tagger
+        .split("assert_local_tag_absent() {")
+        .nth(1)
+        .expect("release tagger must define assert_local_tag_absent")
+        .split("\n}")
+        .next()
+        .expect("assert_local_tag_absent must terminate");
+
+    let lookup = probe
+        .find("git rev-parse --verify --quiet \"refs/tags/$tag\"")
+        .expect("local tag probe must query the exact tag");
+    let error = probe
+        .find("release tag already exists: $tag")
+        .expect("existing local tag must remain a hard failure");
+    let fail = probe
+        .find("exit 2")
+        .expect("existing local tag must exit non-zero");
+    let success = probe
+        .find("return 0")
+        .expect("absent local tag must return success");
+
+    assert!(
+        lookup < error && error < fail && fail < success,
+        "existing-tag failure must remain before the healthy absent-tag return"
+    );
+    assert!(
+        !probe.contains("|| true"),
+        "local tag freshness must never suppress lookup failures"
+    );
+}
