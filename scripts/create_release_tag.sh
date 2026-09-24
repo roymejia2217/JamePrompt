@@ -32,10 +32,11 @@ assert_main_current() {
 }
 
 assert_local_tag_absent() {
-  git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null && {
+  if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
     echo "release tag already exists: $tag" >&2
     exit 2
-  }
+  fi
+  return 0
 }
 
 assert_remote_tag_absent() {
