@@ -159,9 +159,7 @@ fn local_tag_absence_probe_returns_success_when_tag_is_absent() {
         .expect("assert_local_tag_absent must terminate");
 
     assert!(
-        probe.contains(
-            "if git rev-parse --verify --quiet \"refs/tags/$tag\" >/dev/null; then"
-        ),
+        probe.contains("if git rev-parse --verify --quiet \"refs/tags/$tag\" >/dev/null; then"),
         "local tag absence must be modeled as the successful branch of an explicit conditional"
     );
     assert!(
