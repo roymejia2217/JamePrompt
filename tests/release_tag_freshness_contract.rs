@@ -147,7 +147,6 @@ fn remote_tag_absence_probe_fails_closed_on_query_errors() {
     );
 }
 
-
 #[test]
 fn local_tag_absence_probe_returns_success_when_tag_is_absent() {
     let tagger = read_file("scripts/create_release_tag.sh");
@@ -174,7 +173,6 @@ fn local_tag_absence_probe_returns_success_when_tag_is_absent() {
         "expected tag absence must not leak git rev-parse status through an && list"
     );
 }
-
 
 #[test]
 fn local_tag_absence_probe_still_rejects_an_existing_tag_before_success() {
