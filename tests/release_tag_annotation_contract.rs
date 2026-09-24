@@ -117,7 +117,7 @@ fn annotated_tag_creation_preserves_release_metadata_verbatim() {
         "annotated tag creation must preserve Markdown release metadata verbatim"
     );
     assert!(
-        !tagger.contains("git tag -a --cleanup=verbatim \"$tag\" -F \"$tag_message_file\""),
+        !tagger.contains("git tag -a \"$tag\" -F \"$tag_message_file\""),
         "annotated tag creation must not use Git's default comment-stripping cleanup"
     );
 }
