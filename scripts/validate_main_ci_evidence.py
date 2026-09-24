@@ -173,7 +173,8 @@ def run_self_test() -> None:
         ("event", "pull_request"),
         ("status", "in_progress"),
         ("conclusion", "failure"),
-        ("path", ".github/workflows/other.yml@refs/heads/main"),
+        ("path", ".github/workflows/other.yml"),
+        ("path", ".github/workflows/ci.yml@refs/heads/main"),
         ("name", "Other"),
     )
     for field, value in failure_cases:
