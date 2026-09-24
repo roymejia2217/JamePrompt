@@ -124,3 +124,69 @@ fn annotated_tag_creation_preserves_release_metadata_verbatim() {
         "annotated tag creation must not use Git's default comment-stripping cleanup"
     );
 }
+
+
+#[test]
+fn git_verbatim_cleanup_preserves_markdown_annotation_contents() {
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock must be after Unix epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "jameprompt-tag-annotation-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).expect("temporary Git repository must be created");
+
+    let run = |args: &[&str]| {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .expect("git must be executable");
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    };
+
+    run(&["init", "-q"]);
+    run(&["config", "user.name", "JamePrompt Release Contract"]);
+    run(&["config", "user.email", "release-contract@example.invalid"]);
+    run(&["commit", "--allow-empty", "-q", "-m", "initial"]);
+
+    let message = "v1.2.0-beta.10\n\n### Added\n\n- None.\n\n### Fixed\n\n- Preserve release metadata.\n";
+    let message_path = root.join("tag-message.txt");
+    std::fs::write(&message_path, message).expect("tag message fixture must be written");
+
+    let message_arg = message_path
+        .to_str()
+        .expect("temporary tag message path must be UTF-8");
+    run(&[
+        "tag",
+        "-a",
+        "--cleanup=verbatim",
+        "v1.2.0-beta.10",
+        "-F",
+        message_arg,
+    ]);
+
+    let output = run(&[
+        "for-each-ref",
+        "--format=%(contents)",
+        "refs/tags/v1.2.0-beta.10",
+    ]);
+    let contents = String::from_utf8(output.stdout).expect("Git tag contents must be UTF-8");
+
+    assert_eq!(contents.trim(), message.trim());
+    assert!(contents.contains("### Added"));
+    assert!(contents.contains("### Fixed"));
+
+    std::fs::remove_dir_all(&root).expect("temporary Git repository must be removed");
+}
