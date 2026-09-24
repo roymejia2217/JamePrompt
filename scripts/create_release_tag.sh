@@ -84,7 +84,7 @@ python3 scripts/validate_release_gate.py \
   --preflight \
   --target-ref HEAD
 
-git tag -a "$tag" -F "$tag_message_file"
+git tag -a --cleanup=verbatim "$tag" -F "$tag_message_file"
 tag_created=true
 
 python3 scripts/validate_release_gate.py \

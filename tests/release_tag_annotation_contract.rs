@@ -32,7 +32,7 @@ fn annotated_tag_message_is_rendered_from_release_metadata() {
     for required in [
         "validate_release_metadata.py",
         "--write-tag-message",
-        "git tag -a \"$tag\" -F \"$tag_message_file\"",
+        "git tag -a --cleanup=verbatim \"$tag\" -F \"$tag_message_file\"",
     ] {
         assert!(
             tagger.contains(required),
@@ -66,7 +66,7 @@ fn release_gate_validates_actual_annotation_before_release_or_push() {
     }
 
     let create = tagger
-        .find("git tag -a \"$tag\" -F \"$tag_message_file\"")
+        .find("git tag -a --cleanup=verbatim \"$tag\" -F \"$tag_message_file\"")
         .expect("tagger must create annotated tag from rendered metadata");
     let post_tag_gate = tagger
         .rfind("python3 scripts/validate_release_gate.py")
@@ -120,7 +120,7 @@ fn annotated_tag_creation_preserves_release_metadata_verbatim() {
         "annotated tag creation must preserve Markdown release metadata verbatim"
     );
     assert!(
-        !tagger.contains("git tag -a \"$tag\" -F \"$tag_message_file\""),
+        !tagger.contains("git tag -a --cleanup=verbatim \"$tag\" -F \"$tag_message_file\""),
         "annotated tag creation must not use Git's default comment-stripping cleanup"
     );
 }
