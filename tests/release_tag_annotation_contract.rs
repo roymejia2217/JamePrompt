@@ -157,7 +157,8 @@ fn git_verbatim_cleanup_preserves_markdown_annotation_contents() {
     run(&["config", "user.email", "release-contract@example.invalid"]);
     run(&["commit", "--allow-empty", "-q", "-m", "initial"]);
 
-    let message = "v1.2.0-beta.10\n\n### Added\n\n- None.\n\n### Fixed\n\n- Preserve release metadata.\n";
+    let message =
+        "v1.2.0-beta.10\n\n### Added\n\n- None.\n\n### Fixed\n\n- Preserve release metadata.\n";
     let message_path = root.join("tag-message.txt");
     std::fs::write(&message_path, message).expect("tag message fixture must be written");
 
