@@ -146,3 +146,31 @@ fn remote_tag_absence_probe_fails_closed_on_query_errors() {
         "remote tag lookup errors must never be suppressed"
     );
 }
+
+
+#[test]
+fn local_tag_absence_probe_returns_success_when_tag_is_absent() {
+    let tagger = read_file("scripts/create_release_tag.sh");
+    let probe = tagger
+        .split("assert_local_tag_absent() {")
+        .nth(1)
+        .expect("release tagger must define assert_local_tag_absent")
+        .split("\n}")
+        .next()
+        .expect("assert_local_tag_absent must terminate");
+
+    assert!(
+        probe.contains(
+            "if git rev-parse --verify --quiet \"refs/tags/$tag\" >/dev/null; then"
+        ),
+        "local tag absence must be modeled as the successful branch of an explicit conditional"
+    );
+    assert!(
+        probe.contains("return 0"),
+        "local tag absence probe must return success when the tag is absent"
+    );
+    assert!(
+        !probe.contains("&& {"),
+        "expected tag absence must not leak git rev-parse status through an && list"
+    );
+}
