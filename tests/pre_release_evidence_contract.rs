@@ -99,3 +99,18 @@ fn protected_and_local_gates_self_test_release_evidence_contract() {
         "local release change gate must enforce the same CI/Release parity contract"
     );
 }
+
+
+#[test]
+fn release_evidence_matches_the_workflow_path_shape_returned_by_github_actions() {
+    let validator = read_file("scripts/validate_main_ci_evidence.py");
+
+    assert!(
+        validator.contains("path == workflow_path"),
+        "main CI evidence must match the exact workflow path returned by GitHub Actions"
+    );
+    assert!(
+        !validator.contains("path.startswith(f\"{workflow_path}@\")"),
+        "main CI evidence must not require a synthetic @ref suffix absent from workflow runs"
+    );
+}
