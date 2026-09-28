@@ -172,8 +172,7 @@ Example:
 }
 ```
 
-Prompt backups contain prompt records only. Settings remain in
-`settings.json` and are not included in backup JSON.
+Prompt backups contain prompt records only; settings remain in `settings.json` and are not included in the JSON backup.
 
 ## Architecture
 
@@ -185,8 +184,9 @@ platform-specific adapters around desktop integration.
 - `src/hotkeys/` and `src/hotkeys.rs` isolate hotkey behavior.
 - `src/platform.rs`, `src/tray.rs`, `src/autostart.rs`, and
   `src/window_lifecycle.rs` contain platform-facing integration.
-- `src/prompt_repository.rs` and `src/prompt_service.rs` own prompt
-  persistence and application operations.
+- `src/prompt_repository.rs`, `src/prompt_service.rs`, and
+  `src/prompt_backup.rs` own prompt persistence, application operations, and
+  backup serialization.
 - `packaging/` contains the Linux packaging targets, and `wix/` contains
   Windows installer assets.
 
