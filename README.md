@@ -92,9 +92,8 @@ directory is migrated automatically when present.
 
 ### Prompt backup
 
-Use **Export prompts** to write a schema-versioned JSON backup and **Import
-prompts** to review and restore a backup with merge, replace, and duplicate
-handling.
+Use **Export prompts** to write a schema-versioned JSON backup and **Import prompts** to
+review and restore a backup with merge, replace, and duplicate handling.
 
 Prompt backups contain prompt records only; settings remain in `settings.json` and are not included in the JSON backup.
 
