@@ -119,6 +119,26 @@ jobs:
       - name: Validate CI and Release parity
         run: python3 scripts/validate_ci_release_parity.py
 
+      - name: Enforce Standard Readme and remark-lint
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --env HOME=/tmp \
+            --volume "$PWD:/JamePrompt" \
+            --workdir /JamePrompt \
+            docker.io/library/node:24.14.1-bookworm-slim@sha256:b506e7321f176aae77317f99d67a24b272c1f09f1d10f1761f2773447d8da26c \
+            sh -eu -c 'cd ci/readme-policy && NPM_CONFIG_IGNORE_SCRIPTS=true npm ci && cd ../.. && ci/readme-policy/node_modules/.bin/remark README.md --frail --rc-path ci/readme-policy/.remarkrc.json'
+
+      - name: Check README links
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --volume "$PWD:/JamePrompt:ro" \
+            --workdir /JamePrompt \
+            lycheeverse/lychee:0.24.2@sha256:e2d19e57cf6ab037026f20b8e449a1f30d9d7f81eef4194763aab2eab20bd28d \
+            --no-progress --root-dir . README.md
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
