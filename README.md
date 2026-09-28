@@ -1,8 +1,8 @@
+# JamePrompt
+
 <p align="center">
   <img src="docs/banner.webp" alt="JamePrompt Banner" />
 </p>
-
-<h1 align="center">JamePrompt</h1>
 
 <p align="center">
   <a href="https://www.rust-lang.org/">
@@ -16,169 +16,153 @@
   </a>
 </p>
 
-<p align="center">
-  Lightweight and minimal local prompt manager with SQLite storage, global hotkeys, clipboard integration, autostart, and desktop tray support on Linux and Windows.
-</p>
+Lightweight local prompt manager with SQLite storage, global hotkeys, clipboard integration, autostart, and system tray support on Linux and Windows.
 
----
+JamePrompt keeps prompts on the local machine, provides fast search and favorites,
+and integrates with desktop workflows through configurable global hotkeys,
+clipboard copy and paste simulation, autostart, and system tray behavior.
 
-## Quick Start
+## Table of Contents
 
-```bash
+- [Install](#install)
+- [Usage](#usage)
+- [Features](#features)
+- [Platforms and Distribution](#platforms-and-distribution)
+- [Configuration](#configuration)
+- [Architecture](#architecture)
+- [Development](#development)
+- [Screenshots](#screenshots)
+- [Releases](#releases)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Install
+
+JamePrompt requires Rust 1.88 or newer when built from source. Iced is pinned to
+0.14.0, so builds should use the repository lockfile.
+
+### Linux prerequisites
+
+| Dependency | Purpose | Debian/Ubuntu installation |
+| --- | --- | --- |
+| Rust toolchain | Builds and runs the application. | Install with [rustup](https://rustup.rs/). |
+| `pkg-config` | Locates native libraries required by Rust crates. | `sudo apt-get install pkg-config` |
+| GTK 3 development libraries | Provide Linux GUI and tray integration. | `sudo apt-get install libgtk-3-dev` |
+| X11 development libraries | Support hotkeys, keyboard mapping, and paste simulation. | `sudo apt-get install libx11-dev libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev` |
+| AppIndicator support | Enables tray indicator support where available. | `sudo apt-get install libayatana-appindicator3-dev` |
+| `libxdo` development library | Supports simulated paste actions. | `sudo apt-get install libxdo-dev` |
+| Python 3 Pillow | Generates hicolor launcher icon sizes for Debian packaging. | `sudo apt-get install python3-pil` |
+
+Clone the repository and build the locked release binary:
+
+```sh
 git clone https://github.com/roymejia2217/JamePrompt.git
 cd JamePrompt
 cargo build --release --locked
 ```
 
-Requires Rust 1.88 or newer. Iced is pinned to 0.14.0; build with `--locked`.
+The Linux binary is produced at `target/release/jame-prompt`.
 
-```bash
-./target/release/jame-prompt
+### Linux desktop notes
+
+- GNOME Wayland tray integration uses destroy/recreate because hidden tray state
+  is not supported by that environment.
+- Wayland auto-paste requires RemoteDesktop keyboard permission and may display a
+  permission dialog during startup or prewarming.
+- Global hotkeys on Wayland use the XDG GlobalShortcuts portal.
+- Linux X11 requires the xkbcommon X11 runtime package.
+- Tray visibility depends on an active AppIndicator or status notifier
+  implementation in the desktop environment.
+
+Prebuilt packages are available from
+[GitHub Releases](https://github.com/roymejia2217/JamePrompt/releases).
+
+## Usage
+
+Launch the desktop application from a source build:
+
+```sh
+./target/release/jame-prompt [--start-minimized]
 ```
 
----
+On Windows, run `jame-prompt.exe` from the installed or extracted package.
+
+A typical workflow is:
+
+1. Create a prompt with a unique name, content, and optional hotkey.
+2. Search, filter, sort, favorite, edit, or delete prompts from the main window.
+3. Select a prompt to copy its content to the clipboard.
+4. Close the window to keep the application running in the system tray.
+5. Restore the window from the tray icon or tray menu when needed.
+6. Use **Export prompts** to create a JSON backup or **Import prompts** to
+   review and restore one.
+7. Quit from the tray menu when the background process should stop.
+
+`--start-minimized` launches the application hidden. Prompts are stored in
+`prompts.db`, while persistent settings are stored in `settings.json` in the
+application data directory. Existing data from the older `prompt-manager`
+data directory is migrated automatically when present.
 
 ## Features
 
 | Feature | Description |
-|---------|-------------|
+| --- | --- |
 | **Prompt storage** | Stores prompts locally in SQLite through `rusqlite`. |
 | **Search and filtering** | Filters prompts by name or content and supports favorites-based views. |
 | **Prompt management** | Creates, edits, deletes, and favorites prompts from the main window. |
 | **Clipboard workflow** | Copies prompt content to the clipboard for reuse in other applications. |
 | **Global hotkeys** | Registers optional per-prompt shortcuts and triggers prompt actions from anywhere. |
-| **System tray** | Hides the window to the tray, restores it, and exposes a Quit action on Linux and Windows. |
+| **System tray** | Keeps the application available in the tray on Linux and Windows. |
 | **Theme settings** | Persists Light and Dark theme selection in `settings.json`. |
-| **Autostart** | Syncs desktop autostart from the settings screen on Linux and Windows. |
-| **Data migration** | Migrates existing data from the previous `prompt-manager` data directory when available. |
-| **Prompt backup** | Exports prompts to schema-versioned JSON and imports backups with merge/replace and duplicate handling. |
+| **Autostart** | Synchronizes desktop autostart from Settings on Linux and Windows. |
+| **Data migration** | Migrates existing data from the previous `prompt-manager` data directory. |
+| **Prompt backup** | Exports schema-versioned JSON and imports backups with merge, replace, and duplicate handling. |
 
----
+## Platforms and Distribution
 
-## Prerequisites
+### Linux
 
-| Dependency | Purpose | Installation |
-|------------|---------|--------------|
-| **Rust toolchain** | Builds and runs the application from source. | `rustup` |
-| **pkg-config** | Locates native libraries required by Rust crates. | `sudo apt-get install pkg-config` |
-| **GTK 3 development libraries** | Provide the Linux GUI and tray integration layers. | `sudo apt-get install libgtk-3-dev` |
-| **X11 development libraries** | Support global hotkeys, keyboard mapping, and paste simulation. | `sudo apt-get install libx11-dev libxtst-dev libxkbcommon-dev libxkbcommon-x11-dev` |
-| **AppIndicator support** | Enables Linux tray indicator support when the desktop environment provides it. | `sudo apt-get install libayatana-appindicator3-dev` |
-| **`libxdo` development library** | Supports simulated paste actions. | `sudo apt-get install libxdo-dev` |
-| **Python 3 Pillow** | Generates hicolor launcher icon sizes during Debian packaging. | `sudo apt-get install python3-pil` |
+The release pipeline supports:
 
-**Notes:**
-- On GNOME Wayland, tray uses destroy/recreate (Hidden unsupported); auto-paste needs RemoteDesktop keyboard permission (dialog may appear at start/prewarm).
-- Global hotkeys on Wayland use the XDG GlobalShortcuts portal.
-- Linux X11 requires the xkbcommon X11 runtime (`libxkbcommon-x11-0` on Debian/Ubuntu or `libxkbcommon-x11` on Arch/Fedora-family systems).
-- Tray visibility depends on the desktop environment having an active AppIndicator or status notifier implementation.
-
----
-
-## Linux packaging
-
-JamePrompt supports the following Linux packaging targets:
-
-- Debian
-- Arch
-- Fedora
-- RHEL
+- Debian packages
+- Arch Linux packages
+- Fedora and RHEL RPM packages
 - AppImage
 
-Flatpak is not supported.
+Flatpak is not currently supported. Native Linux packages retain global
+hotkeys, paste simulation, system tray support, autostart, and the application
+desktop identity.
 
-The native package builds cover the app's Linux integration features, including global hotkeys, paste simulation, system tray support, and autostart.
+### Windows
 
----
-
-## Windows distribution
-
-JamePrompt ships production Windows builds for:
+Production Windows releases provide:
 
 - MSI installer
 - Portable ZIP
 
-The MSI is the standard Windows installer. It installs JamePrompt under Program Files, registers the app in Windows Apps & Features, creates a Start Menu shortcut, and removes those entries during uninstall.
+The MSI installs JamePrompt under Program Files, registers the application in
+Windows Apps & Features, creates a Start Menu shortcut, and removes those
+entries during uninstall. The portable ZIP is the supported no-install
+distribution.
 
-The portable ZIP is the no-install distribution. Extract it anywhere and run `jame-prompt.exe` from the extracted folder.
-
-The raw application executable is not published as the installer. The release workflow keeps the MSI and portable ZIP as the supported Windows user-facing artifacts.
-
-The Windows distribution path is intended to preserve the same core app behavior as Linux:
-
-- local SQLite-backed prompt storage
-- global hotkeys
-- clipboard copy and paste simulation
-- tray-based background operation
-- autostart from the settings screen
-
-### Running on Windows
-
-After extracting the portable ZIP or installing the MSI:
-
-```powershell
-.\jame-prompt.exe
-```
-
-If you build from source:
-
-```powershell
-cargo build --release --locked --target x86_64-pc-windows-msvc
-.\target\x86_64-pc-windows-msvc\release\jame-prompt.exe
-```
-
----
-
-## Installation
-
-```bash
-cargo build --release --locked
-```
-
-This produces the release binary at `target/release/jame-prompt`.
-
----
-
-## Usage
-
-### Desktop App
-
-```bash
-./target/release/jame-prompt [--start-minimized]
-```
-
-1. Launch the app from the terminal or desktop launcher.
-2. Create a prompt with a unique name, content, and optional hotkey.
-3. Search, filter, sort, favorite, edit, or delete prompts from the main window.
-4. Select a prompt to copy its content to the clipboard.
-5. Close the window to keep the app running in the system tray.
-6. Restore the window from the tray icon or tray menu when needed.
-7. Open Settings and use **Export prompts** to write a JSON backup or **Import prompts** to review and restore a backup.
-8. Quit from the tray menu when the background process should stop.
-
-**Notes:**
-- `--start-minimized` launches the app hidden.
-- Prompts are stored in `prompts.db` and settings are stored in `settings.json` inside the application data directory.
-- Prompt backups contain prompt records only; settings remain in `settings.json` and are not included in the JSON backup.
-- Existing data from the older `prompt-manager` data directory is migrated automatically when present.
-
----
+The raw application executable is not published as a user-facing installer.
 
 ## Configuration
 
-The `settings.json` file in the application data directory stores persistent preferences, and the app also honors a few environment variables for smoke and performance runs.
+The `settings.json` file in the application data directory stores persistent
+preferences. Performance and smoke runs also use environment variables.
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `hotkeys_enabled` | No | Enables per-prompt global hotkeys when set to `true`. Defaults to `true`. |
-| `autostart_enabled` | No | Syncs desktop autostart when set to `true`. Defaults to `false`. |
-| `theme` | No | Selects the UI theme. Use `Dark` or `Light`. Defaults to `Dark`. |
+| Setting or variable | Required | Description |
+| --- | --- | --- |
+| `hotkeys_enabled` | No | Enables per-prompt global hotkeys. Defaults to `true`. |
+| `autostart_enabled` | No | Synchronizes desktop autostart. Defaults to `false`. |
+| `theme` | No | Selects `Dark` or `Light`. Defaults to `Dark`. |
 | `JAME_PROMPT_PERF` | No | Enables performance sampling and report generation. |
 | `JAME_PROMPT_PERF_REPORT_PATH` | No | Writes the performance report to the specified path. |
 | `JAME_PROMPT_PERF_SLOW_MS` | No | Sets the slow-operation threshold in milliseconds. Defaults to `25`. |
 | `JAME_PROMPT_UI_SMOKE_DURATION_MS` | No | Sets the UI smoke soak duration in milliseconds. Defaults to `15000`. |
 
-Example `settings.json`:
+Example:
 
 ```json
 {
@@ -188,100 +172,82 @@ Example `settings.json`:
 }
 ```
 
----
+Prompt backups contain prompt records only. Settings remain in
+`settings.json` and are not included in backup JSON.
 
-## Testing
+## Architecture
 
-```bash
-cargo test --locked
+JamePrompt is a Rust desktop application with application/domain separation and
+platform-specific adapters around desktop integration.
+
+- `src/application/` contains application-level orchestration and stores.
+- `src/domain/` contains domain notification types and policies.
+- `src/hotkeys/` and `src/hotkeys.rs` isolate hotkey behavior.
+- `src/platform.rs`, `src/tray.rs`, `src/autostart.rs`, and
+  `src/window_lifecycle.rs` contain platform-facing integration.
+- `src/prompt_repository.rs` and `src/prompt_service.rs` own prompt
+  persistence and application operations.
+- `packaging/` contains the Linux packaging targets, and `wix/` contains
+  Windows installer assets.
+
+## Development
+
+Install the pinned repository tooling and run the complete local change gate:
+
+```sh
+npm ci
+npm run verify:change
 ```
 
-Test coverage includes:
-- configuration loading, defaults, and migration
-- prompt database and service behavior
-- hotkey parsing and registration
-- autostart synchronization
-- UI smoke and packaging metadata checks
+The gate includes commit-policy self-tests, release-governance validators,
+formatting, and the locked Rust test suite. Focused Rust verification is also
+available directly:
 
----
+```sh
+cargo fmt --all -- --check
+cargo test --locked --all-targets
+```
 
-## Building Executables
+The packaging orchestrator can build the available Linux distribution formats:
 
-```bash
+```sh
 ./build.sh
 ```
 
-The build orchestrator cleans `target/`, builds the release binary, and then runs the available package builds for Debian, Arch, RPM, and AppImage targets.
-
----
-
-## Project Structure
-
-```text
-JamePrompt/
-├── assets/
-├── docs/
-├── fonts/
-├── packaging/
-│   ├── appimage/
-│   ├── arch/
-│   ├── linux/
-│   └── rpm/
-├── scripts/
-├── src/
-│   ├── application/
-│   │   ├── mod.rs
-│   │   └── notification_store.rs
-│   ├── domain/
-│   │   ├── mod.rs
-│   │   ├── notification.rs
-│   │   └── notification_policy.rs
-│   ├── hotkeys/
-│   ├── autostart.rs
-│   ├── config.rs
-│   ├── db.rs
-│   ├── hotkeys.rs
-│   ├── icon.rs
-│   ├── launch.rs
-│   ├── main.rs
-│   ├── migrations.rs
-│   ├── models.rs
-│   ├── perf.rs
-│   ├── perf_smoke.rs
-│   ├── platform.rs
-│   ├── prompt_backup.rs
-│   ├── prompt_repository.rs
-│   ├── prompt_service.rs
-│   ├── settings_service.rs
-│   ├── tray.rs
-│   ├── ui.rs
-│   └── window_lifecycle.rs
-├── tests/
-├── build.rs
-├── build.sh
-├── Cargo.toml
-├── Cargo.lock
-├── LICENSE
-└── README.md
-```
-
-`src/application/` contains application-level orchestration and stores, while `src/domain/` contains domain notification types and policies. Platform-specific behavior is isolated behind `platform.rs`, hotkey adapters, tray integration, and window lifecycle modules.
-
----
+Repository metadata follows Conventional Commits, the checked-in pull-request
+schema, Semantic Versioning, and Keep a Changelog. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the authoritative development and
+delivery workflow.
 
 ## Screenshots
 
 | Screenshot | Description |
-|---|---|
+| --- | --- |
 | <img src="docs/screenshots/main_window.webp" alt="Main window" width="220"> | Main window showing the prompt list, search, and actions. |
-| <img src="docs/screenshots/main_window_min.webp" alt="Main window minimized" width="220"> | Minimized state showing the app kept alive in the system tray. |
+| <img src="docs/screenshots/main_window_min.webp" alt="Main window minimized" width="220"> | Minimized state showing the application kept alive in the system tray. |
 | <img src="docs/screenshots/prompt_editor.webp" alt="Prompt editor" width="220"> | Prompt editor for creating and updating prompt content. |
 | <img src="docs/screenshots/settings_window.webp" alt="Settings window" width="220"> | Settings window with theme, hotkeys, and autostart options. |
 | <img src="docs/screenshots/favorites_filter.webp" alt="Favorites filter" width="220"> | Favorites filter view for narrowing the prompt list. |
 | <img src="docs/screenshots/system_tray.webp" alt="System tray" width="220"> | System tray behavior with restore and quit actions. |
-| <img src="docs/screenshots/about_window.webp" alt="About window" width="220"> | About window with app identity and version information. |
+| <img src="docs/screenshots/about_window.webp" alt="About window" width="220"> | About window with application identity and version information. |
 
----
+## Releases
+
+Published builds and release notes are available from
+[GitHub Releases](https://github.com/roymejia2217/JamePrompt/releases).
+
+JamePrompt supports alpha, beta, and stable SemVer release profiles. Tracked
+package versions and matching `CHANGELOG.md` metadata must reach protected
+`main` before a release tag is created.
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before making changes. Pull requests
+must satisfy the repository's Conventional Commit, PR metadata, CI, packaging,
+and release-governance contracts.
+
+Use [GitHub Issues](https://github.com/roymejia2217/JamePrompt/issues) for
+defect reports and project questions.
 
 ## License
 
