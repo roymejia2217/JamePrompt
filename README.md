@@ -16,7 +16,7 @@
   </a>
 </p>
 
-Lightweight local prompt manager with SQLite storage, global hotkeys, clipboard integration, autostart, and system tray support on Linux and Windows.
+JamePrompt — Lightweight and minimal local prompt manager
 
 JamePrompt keeps prompts on the local machine, provides fast search and favorites,
 and integrates with desktop workflows through configurable global hotkeys,
