@@ -82,6 +82,10 @@ pub enum MessageKey {
     WindowHiddenToTray,
     WindowRestored,
     WindowRestoreFailed,
+    ShortcutAwaitingConsent,
+    ShortcutBindingCancelled,
+    ShortcutBindingUnavailable,
+    ShortcutBindingFailed,
     DestructiveActionRequested,
 }
 

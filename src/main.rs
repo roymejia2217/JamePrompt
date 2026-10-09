@@ -7,6 +7,14 @@ mod application;
 mod autostart;
 mod config;
 pub mod db;
+pub mod desktop;
+#[cfg(target_os = "linux")]
+mod desktop_accessibility;
+mod desktop_diagnostics;
+#[cfg(target_os = "linux")]
+mod desktop_parent;
+#[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+mod desktop_test_support;
 pub mod domain;
 mod hotkeys;
 mod icon;
@@ -43,21 +51,9 @@ fn update_application(app: &mut JamePromptApp, message: Message) -> Task<Message
     match window_lifecycle::classify(&message) {
         WindowLifecycleAction::Delegate => app.update(message),
         WindowLifecycleAction::Close(_id) if app.is_smoke_mode() => app.update(message),
-        WindowLifecycleAction::Close(id) => {
-            app.record_window_closed(id);
-            window_lifecycle::close(id)
-        }
-        WindowLifecycleAction::Open => {
-            if app.begin_window_open() {
-                window_lifecycle::open().map(|id| Message::ShowWindow(Some(id)))
-            } else {
-                Task::none()
-            }
-        }
-        WindowLifecycleAction::Restore(id) => {
-            app.record_window_opened(id);
-            window_lifecycle::restore(id)
-        }
+        WindowLifecycleAction::Close(id) => app.request_close(id),
+        WindowLifecycleAction::Open => app.request_show(),
+        WindowLifecycleAction::Restore(id) => app.present_window(id),
     }
 }
 
@@ -70,10 +66,12 @@ fn theme_application(app: &JamePromptApp, _window_id: window::Id) -> Theme {
 }
 
 fn initial_window_task(app: &mut JamePromptApp, start_minimized: bool) -> Task<Message> {
-    if start_minimized || !app.begin_window_open() {
+    if start_minimized {
         Task::none()
     } else {
-        window_lifecycle::open().map(|id| Message::ShowWindow(Some(id)))
+        // Canonical show intent: Absent opens one window for a new
+        // generation; any other phase coalesces without duplicates.
+        app.request_show()
     }
 }
 
@@ -91,16 +89,54 @@ fn main() -> iced::Result {
     });
 
     let _ = measure("startup.tracing_init", || {
-        tracing_subscriber::fmt::try_init()
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            tracing_subscriber::EnvFilter::new(
+                "jame_prompt=info,iced_winit=warn,iced_wgpu=warn,wgpu_hal=warn,sctk_adwaita=warn",
+            )
+        });
+        tracing_subscriber::fmt().with_env_filter(filter).try_init()
     });
     let start_minimized = measure("startup.parse_args", should_start_minimized);
 
-    #[cfg(target_os = "linux")]
-    measure("startup.gtk_init", || {
-        if let Err(error) = gtk::init() {
-            tracing::warn!("GTK initialization failed; system tray may be unavailable: {error}");
-        }
-    });
+    // No main-thread GTK initialization: GIO/GLib portal work does not
+    // require GTK widgets, and rfd owns its separate GTK thread. The Linux
+    // tray no longer pumps GTK events (ksni service instead).
+
+    #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+    let desktop_test =
+        measure(
+            "startup.parse_test_mode",
+            || match launch::desktop_test_mode_from_args(std::env::args_os(), true) {
+                Ok(mode) => mode,
+                Err(error) => {
+                    eprintln!("invalid desktop test invocation: {error:?}");
+                    std::process::exit(2);
+                }
+            },
+        );
+    #[cfg(not(all(target_os = "linux", feature = "desktop-integration-tests")))]
+    let desktop_test =
+        measure(
+            "startup.parse_test_mode",
+            || match launch::desktop_test_mode_from_args(std::env::args_os(), false) {
+                Ok(mode) => mode,
+                Err(_) => {
+                    eprintln!(
+                        "desktop test switches require the desktop-integration-tests feature"
+                    );
+                    std::process::exit(2);
+                }
+            },
+        );
+    // Feature builds reject the test switches before any production state
+    // when the feature is off; test mode below never touches production
+    // paths, autostart or permission prewarm.
+    #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+    if let Some(mode) = desktop_test {
+        return run_desktop_test(mode);
+    }
+    #[cfg(not(all(target_os = "linux", feature = "desktop-integration-tests")))]
+    let _ = desktop_test;
 
     iced::daemon(
         move || {
@@ -112,6 +148,84 @@ fn main() -> iced::Result {
                 };
                 let window_task = initial_window_task(&mut app, start_minimized);
                 (app, Task::batch([startup_task, window_task]))
+            })
+        },
+        update_application,
+        view_application,
+    )
+    .title(title_application)
+    .theme(theme_application)
+    .font(icon::FONT)
+    .subscription(JamePromptApp::subscription)
+    .run()
+}
+
+#[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+fn run_desktop_test(mode: launch::DesktopTestMode) -> iced::Result {
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+    use std::time::Instant;
+
+    let desktop_config = match desktop::DesktopConfig::from_env() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("invalid desktop configuration: {error}");
+            std::process::exit(2);
+        }
+    };
+    let production_data_dir = config::configured_data_dir();
+    let profile = match desktop_test_support::SyntheticProfile::load(
+        &mode.profile_path,
+        &production_data_dir,
+    ) {
+        Ok(profile) => profile,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+    };
+    let runtime = Arc::new(
+        desktop::DesktopRuntime::synthetic(profile, &production_data_dir, desktop_config)
+            .unwrap_or_else(|error| {
+                eprintln!("invalid synthetic desktop runtime: {error}");
+                std::process::exit(2);
+            }),
+    );
+    std::fs::create_dir_all(runtime.data_root()).unwrap_or_else(|error| {
+        eprintln!("cannot create test data dir: {error}");
+        std::process::exit(2);
+    });
+    let run_id = format!(
+        "r{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0)
+    );
+    let (inbox_tx, inbox_rx) = futures_channel::mpsc::unbounded();
+    let events: Arc<Mutex<VecDeque<desktop_test_support::ControllerEvent>>> =
+        Arc::new(Mutex::new(VecDeque::new()));
+    desktop_test_support::register_inbox(1, inbox_rx);
+    let _controller = desktop_test_support::TestController::start(
+        &mode.controller_socket,
+        run_id.clone(),
+        inbox_tx,
+        Arc::clone(&events),
+        Instant::now(),
+    )
+    .unwrap_or_else(|error| {
+        eprintln!("cannot start test controller: {error}");
+        std::process::exit(2);
+    });
+
+    iced::daemon(
+        move || {
+            measure("startup.app_state", || {
+                JamePromptApp::new_for_desktop_test(
+                    Arc::clone(&runtime),
+                    run_id.clone(),
+                    Arc::clone(&events),
+                )
             })
         },
         update_application,

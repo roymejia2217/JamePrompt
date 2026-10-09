@@ -1,5 +1,6 @@
 /target/
 /node_modules/
+.venv/
 /dist/
 .agents/
 .codex/
@@ -25,3 +26,5 @@ Desktop.ini
 .vscode/
 *.iml
 .cache/
+__pycache__/
+*.pyc

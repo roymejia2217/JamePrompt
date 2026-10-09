@@ -39,5 +39,5 @@ fn executable_and_icon_names_remain_stable() {
     let desktop = read_file("packaging/linux/jame-prompt.desktop");
     assert!(desktop.contains("Exec=jame-prompt"));
     assert!(desktop.contains("Icon=jame-prompt"));
-    assert!(desktop.contains("StartupWMClass=jame-prompt"));
+    assert!(desktop.contains("StartupWMClass=io.github.roymejia2217.JamePrompt"));
 }

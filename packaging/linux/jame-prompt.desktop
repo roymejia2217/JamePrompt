@@ -7,4 +7,4 @@ Icon=jame-prompt
 Terminal=false
 Categories=Utility;
 StartupNotify=true
-StartupWMClass=jame-prompt
+StartupWMClass=io.github.roymejia2217.JamePrompt

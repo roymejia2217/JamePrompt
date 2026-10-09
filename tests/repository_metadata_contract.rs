@@ -328,7 +328,8 @@ fn unreleased_native_autopaste_fix_claim_matches_runtime_contract() {
     for required in [
         "NativeClipboardPrepared",
         "clipboard_matches_expected_prompt",
-        "iced::clipboard::write(content).chain(",
+        "iced::clipboard::write(content)",
+        "chain(iced::clipboard::read()",
         "paste_from_prepared_clipboard()",
     ] {
         assert!(

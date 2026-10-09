@@ -130,10 +130,18 @@ use crate::application::notification_store::{NotificationId, NotificationStore};
 #[cfg(not(test))]
 use crate::autostart;
 use crate::config::{
-    get_current_year, get_db_path, get_settings_path, Settings, APP_DESCRIPTION, APP_NAME,
-    APP_VERSION, WINDOW_INITIAL_WIDTH,
+    get_current_year, Settings, APP_DESCRIPTION, APP_NAME, APP_VERSION, WINDOW_INITIAL_WIDTH,
 };
 use crate::db::Database;
+use crate::desktop::{
+    CancelOutcome, DesktopRuntime, HotkeyEvent, ParentContext, RuntimeMode,
+    ShortcutAcknowledgement, ShortcutSnapshot, ShortcutSpec, ShortcutStatus,
+};
+use crate::desktop_diagnostics::DesktopDiagnostics;
+#[cfg(target_os = "linux")]
+use crate::desktop_parent::SharedParentLease;
+#[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+use crate::desktop_test_support::ControllerEvent as TestControllerEvent;
 use crate::domain::notification::{
     Field, MessageKey, Notification, NotificationAction, NotificationContext, Presentation,
     Severity,
@@ -149,7 +157,10 @@ use crate::prompt_backup::{
     PromptImportPreview, PROMPT_BACKUP_DEFAULT_FILE_NAME, PROMPT_BACKUP_FILE_EXTENSION,
 };
 use crate::settings_service::SettingsService;
+#[cfg(target_os = "windows")]
 use crate::tray::{pump_platform_events, TrayEvent, TrayHandle};
+use crate::tray::{TraySignal, TrayState};
+use crate::window_lifecycle::{WindowEffect, WindowIntent, WindowPhase, WindowState};
 
 #[cfg(not(test))]
 fn sync_autostart_enabled(enabled: bool) -> Result<(), String> {
@@ -207,11 +218,54 @@ pub enum Message {
     // Window management
     CloseRequested(iced::window::Id),
     ShowWindow(Option<iced::window::Id>),
+    /// Authoritative id assignment for an opening generation.
+    WindowOpened {
+        generation: u64,
+        id: iced::window::Id,
+    },
+    /// Supplemental compositor observation (focus/redraw/close).
+    DesktopWindowEvent {
+        id: iced::window::Id,
+        event: iced::window::Event,
+    },
+    /// Completed parent export for a window generation (Linux).
+    #[cfg(target_os = "linux")]
+    ParentExported {
+        generation: u64,
+        result: Result<SharedParentLease, crate::desktop::DesktopErrorCode>,
+    },
+    /// Portal cancellation acknowledgement before window destroy (Linux).
+    InteractionCancelled {
+        generation: u64,
+        result: CancelOutcome,
+    },
     WindowResized(iced::Size),
     SmokeTick,
     SmokeExitRequested,
-    // Tray
+    // Tray: polled on Windows; Linux uses the event-driven TraySignal
+    // subscription, so this variant is never constructed there.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     TrayTick,
+    #[cfg_attr(
+        all(target_os = "linux", feature = "desktop-integration-tests"),
+        allow(dead_code)
+    )]
+    TraySignal(TraySignal),
+    /// Backend shortcut acknowledgement, activation or loss.
+    HotkeyServiceEvent(HotkeyEvent),
+    /// Explicit user retry of pending/failed bindings.
+    RetryShortcutBinding,
+    /// Feature-only test controller command (never constructed in
+    /// production builds).
+    #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+    ControllerPoll,
+    /// Ordered quit pipeline entry (flush, cancel, close session).
+    BeginQuit,
+    /// Shutdown deadline fallback: exit and report.
+    QuitForced,
+    /// Open the desktop keyboard settings for manual rebinding (v1).
+    ConfigureShortcutBinding,
+    DesktopShutdownFinished(crate::desktop::ShutdownOutcome),
     PromptFilterChanged(crate::models::PromptFilter),
     PromptSortChanged(crate::models::PromptSort),
     NotificationDismissed(NotificationId),
@@ -268,6 +322,7 @@ fn ui_density_for_width(width: f32) -> UiDensity {
 
 pub struct JamePromptApp {
     db: Database,
+    runtime: Arc<DesktopRuntime>,
     all_prompts: Vec<Prompt>,
     prompts: Vec<Prompt>,
     search_term: String,
@@ -276,10 +331,28 @@ pub struct JamePromptApp {
     selected_id: Option<PromptId>,
     status_message: String,
     notifications: NotificationStore,
+    /// Current shortcut readiness warning, replaced (never stacked) on
+    /// retry and resolved on valid success.
+    shortcut_notice: Option<NotificationId>,
+    /// Bounded structured desktop lifecycle trace (sanitized, no content).
+    diagnostics: DesktopDiagnostics,
+    /// Feature-only test controller identity and event queue.
+    #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+    test_run_id: Option<String>,
+    #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+    controller_events:
+        Option<std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<TestControllerEvent>>>>,
+    #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+    controller_clock_origin: Instant,
     form_errors: Vec<Notification>,
     settings: Settings,
     hotkey_service: Option<Arc<HotkeyService>>,
-    hotkey_ids: HashMap<u32, PromptId>,
+    /// Versioned desired-shortcut bookkeeping. `hotkey_ids` is derived
+    /// from acknowledged Active routes only — a queued command is never
+    /// shown or routed as ready.
+    desired_revision: u64,
+    last_desired_specs: Vec<ShortcutSpec>,
+    shortcut_states: HashMap<PromptId, ShortcutAcknowledgement>,
     pending_hotkey_name: Option<String>,
     pending_native_paste_content: Option<String>,
     prompt_by_id: HashMap<PromptId, Prompt>,
@@ -294,11 +367,31 @@ pub struct JamePromptApp {
     listening_for_hotkey: bool,
     main_window_id: Option<iced::window::Id>,
     window_open_pending: bool,
+    /// Authoritative lifecycle state; legacy id/pending fields mirror it.
+    window_state: WindowState,
+    /// Owned portal parent lease for the current window (Linux).
+    #[cfg(target_os = "linux")]
+    parent_lease: Option<SharedParentLease>,
+    /// Process-owned AT-SPI root for the current window generation.
+    #[cfg(target_os = "linux")]
+    accessibility: Option<crate::desktop_accessibility::DesktopAccessibility>,
+    /// Last compositor-reported focus state (observation, not a promise).
+    window_focused: bool,
+    /// A window destroy is waiting for the portal cancellation ack: the
+    /// lease is dropped only after the worker confirms release.
+    close_awaiting_cancel: bool,
     content_width: f32,
     smoke_mode: bool,
     smoke_deadline: Option<Instant>,
     // Tray fields
+    #[cfg(target_os = "windows")]
     tray: Option<TrayHandle>,
+    tray_state: TrayState,
+    #[cfg_attr(
+        all(target_os = "linux", feature = "desktop-integration-tests"),
+        allow(dead_code)
+    )]
+    tray_subscription_instance: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,13 +404,17 @@ struct ImportReviewControls {
 
 impl Default for JamePromptApp {
     fn default() -> Self {
+        let runtime = Arc::new(
+            DesktopRuntime::production()
+                .unwrap_or_else(|error| panic!("invalid desktop runtime configuration: {error}")),
+        );
         let (db, startup_warning) = perf::measure("startup.database_open", || {
-            Self::open_database(&get_db_path())
+            Self::open_database(&runtime.db_path())
         });
         let all_prompts =
             perf::measure("startup.prompt_load", || db.get_all("").unwrap_or_default());
         let settings = perf::measure("startup.settings_load", || {
-            Settings::load(&get_settings_path())
+            Settings::load(&runtime.settings_path())
         });
         let autostart_warning = perf::measure("startup.autostart_sync", || {
             sync_autostart_enabled(settings.autostart_enabled)
@@ -326,30 +423,19 @@ impl Default for JamePromptApp {
         });
 
         let hotkey_service = perf::measure("startup.hotkey_service_init", || {
-            HotkeyService::new().map(Arc::new)
+            HotkeyService::new(Arc::clone(&runtime)).map(Arc::new)
         });
-        let mut hotkey_ids = HashMap::new();
-
-        perf::measure("startup.hotkey_registration", || {
-            if let Some(ref svc) = hotkey_service {
-                for p in &all_prompts {
-                    if let Some(ref hk) = p.hotkey {
-                        if p.hotkey_enabled && settings.hotkeys_enabled {
-                            if let Some(hotkey_id) = svc.register(&p.id, &p.name, hk) {
-                                hotkey_ids.insert(hotkey_id, p.id.clone());
-                            }
-                        }
-                    }
-                }
-            }
-        });
-        if settings.hotkeys_enabled {
-            crate::hotkeys::prewarm_permission();
+        if settings.hotkeys_enabled
+            && (runtime.mode() == RuntimeMode::Production || runtime.native_consent_authorized())
+        {
+            crate::hotkeys::prewarm_permission(Arc::clone(&runtime));
         }
 
         let prompt_count = all_prompts.len();
         let prompt_by_id = Self::build_prompt_index(&all_prompts);
-        let (tray, tray_status) = perf::measure("startup.tray_init", initialize_tray);
+        let (tray_state, tray_status) = perf::measure("startup.tray_init", initialize_tray_state);
+        #[cfg(target_os = "windows")]
+        let tray = perf::measure("startup.tray_init", initialize_tray).0;
         let status_message = match (startup_warning, tray_status) {
             (Some(db_warning), Some(tray_warning)) => format!("{db_warning} | {tray_warning}"),
             (Some(db_warning), None) => db_warning,
@@ -363,6 +449,7 @@ impl Default for JamePromptApp {
 
         Self {
             db,
+            runtime,
             all_prompts: all_prompts.clone(),
             prompts: all_prompts,
             search_term: String::new(),
@@ -371,10 +458,20 @@ impl Default for JamePromptApp {
             selected_id: None,
             status_message,
             notifications: NotificationStore::new(),
+            shortcut_notice: None,
+            diagnostics: DesktopDiagnostics::new("main".to_string()),
+            #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+            test_run_id: None,
+            #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+            controller_events: None,
+            #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+            controller_clock_origin: Instant::now(),
             form_errors: Vec::new(),
             settings,
             hotkey_service,
-            hotkey_ids,
+            desired_revision: 0,
+            last_desired_specs: Vec::new(),
+            shortcut_states: HashMap::new(),
             pending_hotkey_name: None,
             pending_native_paste_content: None,
             prompt_by_id,
@@ -389,10 +486,19 @@ impl Default for JamePromptApp {
             listening_for_hotkey: false,
             main_window_id: None,
             window_open_pending: false,
+            window_state: WindowState::absent(),
+            #[cfg(target_os = "linux")]
+            parent_lease: None,
+            accessibility: None,
+            window_focused: false,
+            close_awaiting_cancel: false,
             content_width: WINDOW_INITIAL_WIDTH,
             smoke_mode: false,
             smoke_deadline: None,
+            #[cfg(target_os = "windows")]
             tray,
+            tray_state,
+            tray_subscription_instance: 1,
         }
     }
 }
@@ -407,6 +513,7 @@ impl JamePromptApp {
 
         Self {
             db,
+            runtime: test_runtime(),
             all_prompts: all_prompts.clone(),
             prompts: all_prompts,
             search_term: String::new(),
@@ -415,10 +522,20 @@ impl JamePromptApp {
             selected_id: None,
             status_message: String::new(),
             notifications: NotificationStore::new(),
+            shortcut_notice: None,
+            diagnostics: DesktopDiagnostics::new("main".to_string()),
+            #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+            test_run_id: None,
+            #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+            controller_events: None,
+            #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+            controller_clock_origin: Instant::now(),
             form_errors: Vec::new(),
             settings: Settings::default(),
             hotkey_service: None,
-            hotkey_ids: HashMap::new(),
+            desired_revision: 0,
+            last_desired_specs: Vec::new(),
+            shortcut_states: HashMap::new(),
             pending_hotkey_name: None,
             pending_native_paste_content: None,
             prompt_by_id,
@@ -433,10 +550,19 @@ impl JamePromptApp {
             listening_for_hotkey: false,
             main_window_id: None,
             window_open_pending: false,
+            window_state: WindowState::absent(),
+            #[cfg(target_os = "linux")]
+            parent_lease: None,
+            accessibility: None,
+            window_focused: false,
+            close_awaiting_cancel: false,
             content_width: WINDOW_INITIAL_WIDTH,
             smoke_mode: false,
             smoke_deadline: None,
+            #[cfg(target_os = "windows")]
             tray: None,
+            tray_state: TrayState::Starting,
+            tray_subscription_instance: 1,
         }
     }
 }
@@ -481,6 +607,20 @@ impl JamePromptApp {
             }
             self.status_message = success_message.to_string();
         });
+    }
+
+    /// Publishes a shortcut readiness warning, replacing the previous
+    /// one so retries never stack duplicate banners.
+    fn publish_shortcut_notice(&mut self, event: NotificationEvent) {
+        if let Some(id) = self.shortcut_notice.take() {
+            self.notifications.dismiss(id);
+        }
+        let notification = NotificationPolicy::classify(event)
+            .expect("notification policy must only construct valid notifications");
+        self.shortcut_notice = Some(self.notifications.publish(notification));
+        if matches!(notification.presentation(), Presentation::MessageBar) {
+            self.status_message.clear();
+        }
     }
 
     fn show_notification(&mut self, event: NotificationEvent) {
@@ -549,6 +689,18 @@ impl JamePromptApp {
             }
             (MessageKey::WindowRestoreFailed, NotificationContext::None) => {
                 "Could not restore the application window. Try again.".to_string()
+            }
+            (MessageKey::ShortcutAwaitingConsent, NotificationContext::None) => {
+                "Waiting for shortcut approval in the system dialog".to_string()
+            }
+            (MessageKey::ShortcutBindingCancelled, NotificationContext::None) => {
+                "Shortcut approval was cancelled. The prompt is kept; retry when ready.".to_string()
+            }
+            (MessageKey::ShortcutBindingUnavailable, NotificationContext::None) => {
+                "Shortcut backend is unavailable. The prompt is kept; retry when ready.".to_string()
+            }
+            (MessageKey::ShortcutBindingFailed, NotificationContext::None) => {
+                "Could not register the shortcut. Check the key and retry.".to_string()
             }
             _ => "Notification unavailable".to_string(),
         }
@@ -636,18 +788,126 @@ impl JamePromptApp {
         }
     }
 
-    fn unregister_prompt_hotkey(&mut self, id: &str) {
-        if let Some(ref svc) = self.hotkey_service {
-            let old_hotkey_id = self
-                .hotkey_ids
-                .iter()
-                .find(|(_, pid)| pid.as_str() == id)
-                .map(|(&hid, _)| hid);
-            if let Some(hid) = old_hotkey_id {
-                svc.unregister(hid);
-                self.hotkey_ids.remove(&hid);
+    /// Builds the effective sorted desired snapshot: globally enabled,
+    /// per-prompt enabled, nonempty and parseable triggers only.
+    fn desired_shortcut_specs(&self) -> Vec<ShortcutSpec> {
+        if !self.settings.hotkeys_enabled {
+            return Vec::new();
+        }
+        let mut specs: Vec<ShortcutSpec> = self
+            .all_prompts
+            .iter()
+            .filter(|prompt| prompt.hotkey_enabled)
+            .filter_map(|prompt| {
+                prompt.hotkey.as_ref().and_then(|trigger| {
+                    if trigger.trim().is_empty() || !crate::hotkeys::validate_hotkey(trigger) {
+                        return None;
+                    }
+                    Some(ShortcutSpec {
+                        prompt_id: prompt.id.clone(),
+                        description: prompt.name.clone(),
+                        preferred_trigger: trigger.clone(),
+                    })
+                })
+            })
+            .collect();
+        specs.sort_by(|a, b| a.prompt_id.cmp(&b.prompt_id));
+        specs
+    }
+
+    /// Single synchronization owner for every committed mutation. Builds
+    /// the effective snapshot, bumps the revision only on effective
+    /// change, marks affected prompts Pending, and queues exactly one
+    /// reconcile. Content-only edits are no-ops: no new session, no new
+    /// consent dialog. Must be called only after the database commit
+    /// succeeded — never rolls back a committed prompt.
+    fn reconcile_shortcuts_after_commit(&mut self) {
+        let specs = self.desired_shortcut_specs();
+        let last = (self.desired_revision > 0)
+            .then(|| ShortcutSnapshot::new(self.desired_revision, self.last_desired_specs.clone()));
+        let (snapshot, _) = crate::desktop::next_snapshot_revision(
+            last.as_ref(),
+            &specs,
+            self.desired_revision.saturating_add(1),
+        );
+        if last.as_ref().is_some_and(|previous| {
+            previous.revision == snapshot.revision && previous.same_effective_set(&snapshot)
+        }) {
+            return;
+        }
+        self.desired_revision = snapshot.revision;
+        // Prompts that left the desired set lose their routes with the
+        // serial replacement; drop their stale states now.
+        let desired_ids: std::collections::HashSet<&str> =
+            specs.iter().map(|spec| spec.prompt_id.as_str()).collect();
+        self.shortcut_states
+            .retain(|prompt_id, _| desired_ids.contains(prompt_id.as_str()));
+        for spec in &specs {
+            self.shortcut_states.insert(
+                spec.prompt_id.clone(),
+                ShortcutAcknowledgement {
+                    revision: self.desired_revision,
+                    prompt_id: spec.prompt_id.clone(),
+                    runtime_id: None,
+                    status: ShortcutStatus::Pending,
+                    trigger_description: None,
+                    error_code: None,
+                },
+            );
+        }
+        self.last_desired_specs = snapshot.shortcuts.clone();
+        self.diagnostics.record(
+            "save_committed",
+            Some(self.desired_revision),
+            Some(self.window_state.generation),
+            Some(format!("desired={}", self.last_desired_specs.len())),
+        );
+        let Some(ref svc) = self.hotkey_service else {
+            return;
+        };
+        match svc.reconcile(&snapshot) {
+            Ok(receipt) => {
+                for prompt_id in receipt.rejected_prompt_ids {
+                    self.shortcut_states.insert(
+                        prompt_id.clone(),
+                        ShortcutAcknowledgement {
+                            revision: self.desired_revision,
+                            prompt_id,
+                            runtime_id: None,
+                            status: ShortcutStatus::Failed,
+                            trigger_description: None,
+                            error_code: None,
+                        },
+                    );
+                }
+            }
+            Err(error) => {
+                for spec in &self.last_desired_specs.clone() {
+                    self.shortcut_states.insert(
+                        spec.prompt_id.clone(),
+                        ShortcutAcknowledgement {
+                            revision: self.desired_revision,
+                            prompt_id: spec.prompt_id.clone(),
+                            runtime_id: None,
+                            status: ShortcutStatus::Failed,
+                            trigger_description: None,
+                            error_code: Some(error),
+                        },
+                    );
+                }
             }
         }
+    }
+
+    /// Maps an acknowledged runtime id back to its stable prompt identity.
+    /// Only Active routes are routable; anything else is stale.
+    fn runtime_to_prompt(&self, runtime_id: u32) -> Option<PromptId> {
+        self.shortcut_states
+            .iter()
+            .find(|(_, ack)| {
+                ack.runtime_id == Some(runtime_id) && ack.status == ShortcutStatus::Active
+            })
+            .map(|(prompt_id, _)| prompt_id.clone())
     }
 
     fn build_prompt_index(prompts: &[Prompt]) -> HashMap<PromptId, Prompt> {
@@ -786,29 +1046,22 @@ impl JamePromptApp {
         Ok(())
     }
 
-    fn rebuild_hotkey_registrations(&mut self) {
-        if let Some(ref svc) = self.hotkey_service {
-            for &hotkey_id in self.hotkey_ids.keys() {
-                svc.unregister(hotkey_id);
-            }
-        }
-        self.hotkey_ids.clear();
-
-        if !self.settings.hotkeys_enabled {
-            return;
-        }
-
-        if let Some(ref svc) = self.hotkey_service {
-            for prompt in &self.all_prompts {
-                if prompt.hotkey_enabled {
-                    if let Some(ref hotkey) = prompt.hotkey {
-                        if let Some(hotkey_id) = svc.register(&prompt.id, &prompt.name, hotkey) {
-                            self.hotkey_ids.insert(hotkey_id, prompt.id.clone());
-                        }
-                    }
-                }
-            }
-        }
+    /// Applies one backend acknowledgement to the readiness map.
+    /// Accepts only the current desired revision for a still-desired
+    /// prompt; stale or unknown acks are rejected without mutation so a
+    /// late consent can never resurrect a deleted binding.
+    fn apply_shortcut_acknowledgement(&mut self, ack: ShortcutAcknowledgement) -> bool {
+        let desired_ids: std::collections::HashSet<String> = self
+            .desired_shortcut_specs()
+            .into_iter()
+            .map(|spec| spec.prompt_id)
+            .collect();
+        crate::desktop::apply_acknowledgement(
+            &mut self.shortcut_states,
+            &desired_ids,
+            self.desired_revision,
+            ack,
+        )
     }
 
     fn prompt_list_empty_message(&self) -> &'static str {
@@ -882,7 +1135,9 @@ impl JamePromptApp {
         };
 
         self.reload_prompt_cache_from_db()?;
-        self.rebuild_hotkey_registrations();
+        // One snapshot after the successful import transaction — never
+        // one consent dialog per imported row.
+        self.reconcile_shortcuts_after_commit();
         self.pending_import_backup = None;
         self.pending_import_preview = None;
         Ok(summary)
@@ -933,7 +1188,7 @@ async fn import_prompts_from_json_file() -> Result<PromptBackup, String> {
     PromptBackup::from_json(&json).map_err(|error| error.to_string())
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), target_os = "windows"))]
 fn initialize_tray() -> (Option<TrayHandle>, Option<String>) {
     match TrayHandle::new() {
         Ok(tray) => (Some(tray), None),
@@ -941,9 +1196,24 @@ fn initialize_tray() -> (Option<TrayHandle>, Option<String>) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "windows"))]
 fn initialize_tray() -> (Option<TrayHandle>, Option<String>) {
     (None, None)
+}
+
+/// Initial Linux tray state. The ksni service reports Ready/Unavailable
+/// asynchronously through the subscription; `Starting` is explicitly not
+/// ready, so hidden startup waits for the signal instead of assuming a
+/// tray exists.
+#[cfg(target_os = "linux")]
+fn initialize_tray_state() -> (TrayState, Option<String>) {
+    (TrayState::Starting, None)
+}
+
+/// Windows keeps the synchronous tray assumption for hidden-start fallback.
+#[cfg(not(target_os = "linux"))]
+fn initialize_tray_state() -> (TrayState, Option<String>) {
+    (TrayState::Starting, None)
 }
 
 /// Converts pressed keyboard events into hotkey capture messages.
@@ -970,6 +1240,22 @@ fn normalize_editor_text(text: &str) -> String {
     text.trim_end_matches('\n').to_string()
 }
 
+/// User-facing label for a shortcut readiness state. The requested key
+/// and the backend-assigned trigger are shown separately wherever both
+/// are known; this label never rewrites one as the other.
+fn status_label(status: ShortcutStatus) -> &'static str {
+    match status {
+        ShortcutStatus::Pending => "pending",
+        ShortcutStatus::AwaitingWindow => "waiting for window",
+        ShortcutStatus::AwaitingConsent => "waiting for approval",
+        ShortcutStatus::Active => "active",
+        ShortcutStatus::Inactive => "inactive",
+        ShortcutStatus::Cancelled => "cancelled",
+        ShortcutStatus::Unavailable => "unavailable",
+        ShortcutStatus::Failed => "failed",
+    }
+}
+
 fn clipboard_matches_expected_prompt(expected: &str, actual: Option<&str>) -> bool {
     actual == Some(expected)
 }
@@ -994,6 +1280,36 @@ const NATIVE_HOTKEY_SMOKE_NAME: &str = "Native hotkey smoke";
 const NATIVE_HOTKEY_SMOKE_CONTENT: &str = "JamePrompt native smoke ñ 123";
 const NATIVE_HOTKEY_SMOKE_HOTKEY: &str = "Ctrl+Shift+P";
 
+fn memory_runtime() -> Arc<DesktopRuntime> {
+    memory_runtime_with_consent(false)
+}
+
+fn memory_runtime_with_consent(native_consent_authorized: bool) -> Arc<DesktopRuntime> {
+    Arc::new(
+        DesktopRuntime::from_parts(
+            crate::desktop::DesktopConfig::default(),
+            "io.github.roymejia2217.JamePrompt.Test",
+            std::env::temp_dir(),
+            None,
+            RuntimeMode::Synthetic,
+            native_consent_authorized,
+        )
+        .expect("memory runtime must validate"),
+    )
+}
+
+#[cfg(test)]
+fn test_runtime() -> Arc<DesktopRuntime> {
+    memory_runtime()
+}
+
+#[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+fn static_controller_event_sequence() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQUENCE: AtomicU64 = AtomicU64::new(1);
+    SEQUENCE.fetch_add(1, Ordering::Relaxed)
+}
+
 impl JamePromptApp {
     #[cfg(test)]
     pub fn new() -> (Self, Task<Message>) {
@@ -1007,6 +1323,7 @@ impl JamePromptApp {
 
         Self {
             db,
+            runtime: memory_runtime(),
             all_prompts: all_prompts.clone(),
             prompts: all_prompts,
             search_term: String::new(),
@@ -1015,10 +1332,20 @@ impl JamePromptApp {
             selected_id: None,
             status_message: "Smoke mode ready".into(),
             notifications: NotificationStore::new(),
+            shortcut_notice: None,
+            diagnostics: DesktopDiagnostics::new("main".to_string()),
+            #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+            test_run_id: None,
+            #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+            controller_events: None,
+            #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+            controller_clock_origin: Instant::now(),
             form_errors: Vec::new(),
             settings: Settings::default(),
             hotkey_service: None,
-            hotkey_ids: HashMap::new(),
+            desired_revision: 0,
+            last_desired_specs: Vec::new(),
+            shortcut_states: HashMap::new(),
             pending_hotkey_name: None,
             pending_native_paste_content: None,
             prompt_by_id,
@@ -1033,10 +1360,19 @@ impl JamePromptApp {
             listening_for_hotkey: false,
             main_window_id: None,
             window_open_pending: false,
+            window_state: WindowState::absent(),
+            #[cfg(target_os = "linux")]
+            parent_lease: None,
+            accessibility: None,
+            window_focused: false,
+            close_awaiting_cancel: false,
             content_width: WINDOW_INITIAL_WIDTH,
             smoke_mode: true,
             smoke_deadline: None,
+            #[cfg(target_os = "windows")]
             tray: None,
+            tray_state: TrayState::Starting,
+            tray_subscription_instance: 1,
         }
     }
 
@@ -1063,16 +1399,25 @@ impl JamePromptApp {
         };
         let all_prompts = vec![prompt.clone()];
         let prompt_by_id = Self::build_prompt_index(&all_prompts);
-        let hotkey_service =
-            Arc::new(HotkeyService::new().expect("native hotkey smoke backend should initialize"));
-        let hotkey_id = hotkey_service
-            .register(&prompt.id, &prompt.name, NATIVE_HOTKEY_SMOKE_HOTKEY)
-            .expect("native hotkey smoke shortcut should register");
-        let mut hotkey_ids = HashMap::new();
-        hotkey_ids.insert(hotkey_id, prompt.id.clone());
+        let hotkey_service = Arc::new(
+            HotkeyService::new(memory_runtime_with_consent(true))
+                .expect("native hotkey smoke backend should initialize"),
+        );
+        let smoke_specs = vec![crate::desktop::ShortcutSpec {
+            prompt_id: prompt.id.clone(),
+            description: prompt.name.clone(),
+            preferred_trigger: NATIVE_HOTKEY_SMOKE_HOTKEY.to_string(),
+        }];
+        hotkey_service
+            .reconcile(&crate::desktop::ShortcutSnapshot::new(
+                1,
+                smoke_specs.clone(),
+            ))
+            .expect("native hotkey smoke shortcut should reconcile");
 
         Self {
             db,
+            runtime: memory_runtime(),
             all_prompts: all_prompts.clone(),
             prompts: all_prompts,
             search_term: String::new(),
@@ -1081,10 +1426,17 @@ impl JamePromptApp {
             selected_id: Some(prompt.id),
             status_message: "Native hotkey smoke ready".into(),
             notifications: NotificationStore::new(),
+            shortcut_notice: None,
+            diagnostics: DesktopDiagnostics::new("main".to_string()),
+            #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+            test_run_id: None,
+            #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+            controller_events: None,
+            #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+            controller_clock_origin: Instant::now(),
             form_errors: Vec::new(),
             settings: Settings::default(),
             hotkey_service: Some(hotkey_service),
-            hotkey_ids,
             pending_hotkey_name: None,
             pending_native_paste_content: None,
             prompt_by_id,
@@ -1099,11 +1451,30 @@ impl JamePromptApp {
             listening_for_hotkey: false,
             main_window_id: None,
             window_open_pending: false,
+            window_state: WindowState::absent(),
+            #[cfg(target_os = "linux")]
+            parent_lease: None,
+            accessibility: None,
+            window_focused: false,
+            close_awaiting_cancel: false,
             content_width: WINDOW_INITIAL_WIDTH,
             smoke_mode: true,
             smoke_deadline: None,
+            #[cfg(target_os = "windows")]
             tray: None,
+            tray_state: TrayState::Starting,
+            tray_subscription_instance: 1,
+            desired_revision: 1,
+            last_desired_specs: smoke_specs,
+            shortcut_states: HashMap::new(),
         }
+    }
+
+    /// Queues the startup desired snapshot once (Pending, never Active)
+    /// and subscribes to backend state even with zero active ids.
+    /// Never blocks GUI startup on backend initialization.
+    fn queue_startup_shortcuts(&mut self) {
+        self.reconcile_shortcuts_after_commit();
     }
 
     fn with_startup_tasks(mut app: Self, start_minimized: bool) -> (Self, Task<Message>) {
@@ -1123,13 +1494,24 @@ impl JamePromptApp {
         } else {
             None
         };
+        // Windows keeps the synchronous tray assumption. Other platforms
+        // receive tray readiness asynchronously via TraySignal: a hidden
+        // start waits for Ready or the bounded initial failure, then the
+        // signal handler opens the fallback window if still windowless.
+        #[cfg(target_os = "windows")]
         let tray_available = app.tray.is_some();
+        #[cfg(not(target_os = "windows"))]
+        let tray_available = true;
         let fallback_task =
             if should_show_window_after_hidden_start(start_minimized, tray_available) {
                 Task::done(Message::ShowWindow(None))
             } else {
                 Task::none()
             };
+        // Defer user-interactive portal binds until the window (and its
+        // parent export) is ready; the snapshot is queued once and the
+        // backend state is subscribed even with zero active ids.
+        app.queue_startup_shortcuts();
 
         (app, Task::batch([fallback_task, smoke_exit_task]))
     }
@@ -1148,28 +1530,825 @@ impl JamePromptApp {
         Self::with_startup_tasks(Self::new_native_hotkey_smoke_mode(), start_minimized)
     }
 
+    /// Feature-only test constructor: synthetic database in the private
+    /// profile dir (never production paths), default settings, no
+    /// autostart sync, no permission prewarm — but the real platform
+    /// hotkey and tray backends.
+    #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+    pub fn new_for_desktop_test(
+        runtime: Arc<DesktopRuntime>,
+        run_id: String,
+        controller_events: std::sync::Arc<
+            std::sync::Mutex<std::collections::VecDeque<TestControllerEvent>>,
+        >,
+    ) -> (Self, Task<Message>) {
+        let db_path = runtime.db_path();
+        Self::with_startup_tasks(
+            Self::new_for_desktop_test_inner(&db_path, runtime, run_id, controller_events),
+            false,
+        )
+    }
+
+    #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+    fn new_for_desktop_test_inner(
+        db_path: &std::path::Path,
+        runtime: Arc<DesktopRuntime>,
+        run_id: String,
+        controller_events: std::sync::Arc<
+            std::sync::Mutex<std::collections::VecDeque<TestControllerEvent>>,
+        >,
+    ) -> Self {
+        let (db, warning) = Self::open_database(db_path);
+        let all_prompts = db.get_all("").unwrap_or_default();
+        let prompt_by_id = Self::build_prompt_index(&all_prompts);
+        let hotkey_service = HotkeyService::new(Arc::clone(&runtime)).map(Arc::new);
+        Self {
+            db,
+            runtime,
+            all_prompts: all_prompts.clone(),
+            prompts: all_prompts,
+            search_term: String::new(),
+            prompt_filter: PromptFilter::All,
+            prompt_sort: PromptSort::NameAsc,
+            selected_id: None,
+            status_message: warning.unwrap_or_default(),
+            notifications: NotificationStore::new(),
+            shortcut_notice: None,
+            form_errors: Vec::new(),
+            diagnostics: DesktopDiagnostics::new(run_id.clone()),
+            test_run_id: Some(run_id),
+            controller_events: Some(controller_events),
+            controller_clock_origin: Instant::now(),
+            settings: Settings::default(),
+            hotkey_service,
+            desired_revision: 0,
+            last_desired_specs: Vec::new(),
+            shortcut_states: HashMap::new(),
+            pending_hotkey_name: None,
+            pending_native_paste_content: None,
+            prompt_by_id,
+            new_form: None,
+            show_settings: false,
+            show_info: false,
+            pending_delete_id: None,
+            pending_import_backup: None,
+            pending_import_preview: None,
+            pending_import_mode: ImportMode::Merge,
+            pending_duplicate_mode: DuplicateMode::Skip,
+            listening_for_hotkey: false,
+            main_window_id: None,
+            window_open_pending: false,
+            window_state: WindowState::absent(),
+            parent_lease: None,
+            accessibility: None,
+            window_focused: false,
+            close_awaiting_cancel: false,
+            content_width: WINDOW_INITIAL_WIDTH,
+            smoke_mode: false,
+            smoke_deadline: None,
+            tray_state: TrayState::Starting,
+            tray_subscription_instance: 1,
+        }
+    }
+
     pub fn title(&self) -> String {
         APP_NAME.to_string()
     }
 
-    pub(crate) fn begin_window_open(&mut self) -> bool {
-        if self.main_window_id.is_some() || self.window_open_pending {
+    /// Canonical user show intent: Absent opens one window for a new
+    /// generation; repeated shows coalesce; show during Closing latches a
+    /// single reopen on Closed.
+    pub(crate) fn request_show(&mut self) -> Task<Message> {
+        self.diagnostics.record(
+            "show_requested",
+            Some(self.desired_revision),
+            Some(self.window_state.generation),
+            None,
+        );
+        let effects =
+            crate::window_lifecycle::transition(&mut self.window_state, WindowIntent::Show);
+        self.mirror_window_state();
+        self.apply_window_effects(effects)
+    }
+
+    /// Canonical close intent for a window id. Marks Closing and submits
+    /// the surface destroy; Absent is published only on the Closed event.
+    pub(crate) fn request_close(&mut self, id: iced::window::Id) -> Task<Message> {
+        // Portal close handshake (Linux, production): request
+        // cancellation and await the worker acknowledgement before
+        // dropping the lease and destroying the window. The ack resolves
+        // immediately when nothing is pending, so this never stalls the
+        // common path.
+        #[cfg(target_os = "linux")]
+        let defer_for_cancel = !self.smoke_mode
+            && self.hotkey_service.is_some()
+            && self.window_state.id == Some(id)
+            && self.window_state.phase == WindowPhase::Open;
+        #[cfg(not(target_os = "linux"))]
+        let defer_for_cancel = false;
+        let effects =
+            crate::window_lifecycle::transition(&mut self.window_state, WindowIntent::Close(id));
+        self.diagnostics.record(
+            "close_requested",
+            Some(self.desired_revision),
+            Some(self.window_state.generation),
+            None,
+        );
+        self.mirror_window_state();
+        if defer_for_cancel {
+            #[cfg(target_os = "linux")]
+            if let Some(ref svc) = self.hotkey_service {
+                let generation = self.window_state.generation;
+                self.close_awaiting_cancel = true;
+                let pending = svc.cancel_interaction(generation);
+                return Task::perform(async move { pending.await }, move |result| {
+                    Message::InteractionCancelled {
+                        generation,
+                        result: result.unwrap_or(CancelOutcome::NoPendingRequest),
+                    }
+                });
+            }
+        }
+        self.apply_window_effects(effects)
+    }
+
+    /// Canonical present intent for a known window id: presents when it is
+    /// the current open window, otherwise falls back to a fresh show.
+    pub(crate) fn present_window(&mut self, id: iced::window::Id) -> Task<Message> {
+        if self.window_state.id == Some(id)
+            && self.window_state.phase == crate::window_lifecycle::WindowPhase::Open
+        {
+            self.show_notification(NotificationEvent::WindowRestored);
+            return crate::window_lifecycle::restore_for_platform(id);
+        }
+        self.request_show()
+    }
+
+    /// Authoritative open completion for a generation. Assigns the id once,
+    /// disposes stale generations safely, and exports the Linux portal
+    /// parent for the new window.
+    fn note_window_opened(&mut self, generation: u64, id: iced::window::Id) -> Task<Message> {
+        #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+        self.record_controller_event(0, "window_opened_dispatched");
+        self.diagnostics.record(
+            "window_opened",
+            Some(self.desired_revision),
+            Some(generation),
+            None,
+        );
+        let effects = crate::window_lifecycle::transition(
+            &mut self.window_state,
+            WindowIntent::Opened { generation, id },
+        );
+        self.mirror_window_state();
+        #[cfg(target_os = "linux")]
+        if self.window_state.id == Some(id) && self.accessibility.is_none() {
+            self.accessibility = Some(crate::desktop_accessibility::DesktopAccessibility::new());
+        }
+        let mut task = self.apply_window_effects(effects);
+        #[cfg(target_os = "linux")]
+        if self.window_state.id == Some(id) && self.parent_lease_for(id, generation).is_none() {
+            task = Task::batch([
+                task,
+                crate::desktop_parent::export_parent(id, generation)
+                    .map(move |result| Message::ParentExported { generation, result }),
+            ]);
+        }
+        task
+    }
+
+    /// Authoritative destruction event. Publishes Absent, or the single
+    /// latched reopen when a show arrived during Closing.
+    fn note_window_closed(&mut self, id: iced::window::Id) -> Task<Message> {
+        #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+        self.record_controller_event(0, "window_closed_dispatched");
+        self.diagnostics.record(
+            "window_closed",
+            Some(self.desired_revision),
+            Some(self.window_state.generation),
+            None,
+        );
+        let effects =
+            crate::window_lifecycle::transition(&mut self.window_state, WindowIntent::Closed(id));
+        self.close_awaiting_cancel = false;
+        self.mirror_window_state();
+        #[cfg(target_os = "linux")]
+        if self.window_state.id.is_none() {
+            self.parent_lease = None;
+            self.accessibility = None;
+        }
+        self.apply_window_effects(effects)
+    }
+
+    /// Supplemental compositor observation. Opened is authoritative only
+    /// through the open-task completion; a matching event for the current
+    /// id is observed without duplicating export or effects. Closed is
+    /// authoritative destruction. Focus is recorded as observed policy,
+    /// never as a restore success claim.
+    fn handle_desktop_window_event(
+        &mut self,
+        id: iced::window::Id,
+        event: iced::window::Event,
+    ) -> Task<Message> {
+        match event {
+            iced::window::Event::Closed => self.note_window_closed(id),
+            iced::window::Event::Focused => {
+                self.window_focused = true;
+                Task::none()
+            }
+            iced::window::Event::Unfocused => {
+                self.window_focused = false;
+                Task::none()
+            }
+            iced::window::Event::Opened { .. } => Task::none(),
+            _ => Task::none(),
+        }
+    }
+
+    fn apply_window_effects(&self, effects: Vec<WindowEffect>) -> Task<Message> {
+        let mut tasks = Vec::with_capacity(effects.len());
+        for effect in effects {
+            match effect {
+                WindowEffect::OpenWindow { generation } => {
+                    tasks.push(
+                        crate::window_lifecycle::open()
+                            .map(move |id| Message::WindowOpened { generation, id }),
+                    );
+                }
+                WindowEffect::Present { id } => {
+                    tasks.push(crate::window_lifecycle::restore_for_platform(id));
+                }
+                WindowEffect::CloseWindow { id } | WindowEffect::DropStaleOpened { id } => {
+                    tasks.push(crate::window_lifecycle::close(id));
+                }
+                WindowEffect::None => {}
+            }
+        }
+        Task::batch(tasks)
+    }
+
+    /// Mirrors the authoritative lifecycle state into the legacy id/pending
+    /// fields consumed by addressing and fallback decisions.
+    fn mirror_window_state(&mut self) {
+        self.main_window_id = self.window_state.id;
+        self.window_open_pending = self.window_state.id.is_none()
+            && self.window_state.phase == crate::window_lifecycle::WindowPhase::Opening;
+    }
+
+    #[cfg(target_os = "linux")]
+    fn parent_lease_for(&self, id: iced::window::Id, generation: u64) -> Option<SharedParentLease> {
+        self.parent_lease
+            .clone()
+            .filter(|lease| lease.is_current_for(generation) && self.window_state.id == Some(id))
+    }
+
+    /// Executes one controller operation through the production message
+    /// handlers on the iced main thread — never direct database writes,
+    /// never a parallel save path. The reply reports the production
+    /// outcome (database row identity, shortcut status snapshot); a
+    /// controller acknowledgement is NOT portal consent acceptance.
+    #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+    fn record_controller_event(&self, operation_id: u64, event: &'static str) {
+        let Some(queue) = self.controller_events.as_ref() else {
+            return;
+        };
+        let sequence = static_controller_event_sequence();
+        let event = TestControllerEvent {
+            version: crate::desktop_test_support::PROTOCOL_VERSION,
+            run_id: self.test_run_id.clone().unwrap_or_default(),
+            operation_id,
+            sequence,
+            monotonic_ns: self
+                .controller_clock_origin
+                .elapsed()
+                .as_nanos()
+                .min(u128::from(u64::MAX)) as u64,
+            revision: Some(self.desired_revision),
+            window_generation: Some(self.window_state.generation),
+            event: event.to_string(),
+        };
+        if let Ok(mut events) = queue.lock() {
+            if events.len() >= crate::desktop_test_support::MAX_PENDING_COMMANDS {
+                events.pop_front();
+            }
+            events.push_back(event);
+        }
+    }
+
+    #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+    fn apply_controller_command(
+        &mut self,
+        command: crate::desktop_test_support::ControllerCommand,
+    ) -> Task<Message> {
+        use crate::desktop_test_support::{ControllerError, ControllerOperation};
+
+        let request_id = command.request_id;
+        let reply = command.reply;
+        self.record_controller_event(request_id, "controller_operation_dispatched");
+        let respond =
+            move |ok: bool, result: Option<serde_json::Value>, error: Option<ControllerError>| {
+                if let Ok(mut slot) = reply.lock() {
+                    if let Some(sender) = slot.take() {
+                        let _ = sender.send(crate::desktop_test_support::ControllerResponse {
+                            version: crate::desktop_test_support::PROTOCOL_VERSION,
+                            request_id,
+                            ok,
+                            result,
+                            error,
+                        });
+                    }
+                }
+            };
+        let failed = |message: String| {
+            respond(
+                false,
+                None,
+                Some(ControllerError {
+                    code: "operation_failed".to_string(),
+                    message,
+                }),
+            );
+            Task::none()
+        };
+        // Sequential translation: each production message runs through the
+        // same update path as real input, forwarding produced Tasks into
+        // the same dispatcher.
+        match command.operation {
+            ControllerOperation::Hello {} => {
+                respond(
+                    true,
+                    Some(serde_json::json!({
+                        "protocol_version": crate::desktop_test_support::PROTOCOL_VERSION,
+                        "run_id": self.test_run_id,
+                        "pid": std::process::id(),
+                        "revision": self.desired_revision,
+                        "window_generation": self.window_state.generation,
+                    })),
+                    None,
+                );
+                Task::none()
+            }
+            ControllerOperation::State {} => {
+                let shortcuts: Vec<serde_json::Value> = self
+                    .shortcut_states
+                    .iter()
+                    .map(|(prompt_id, ack)| {
+                        serde_json::json!({
+                            "prompt_id": prompt_id,
+                            "revision": ack.revision,
+                            "status": format!("{:?}", ack.status),
+                            "runtime_id": ack.runtime_id,
+                            "trigger_description": ack.trigger_description,
+                        })
+                    })
+                    .collect();
+                respond(
+                    true,
+                    Some(serde_json::json!({
+                        "window_id_assigned": self.main_window_id.is_some(),
+                        "window_generation": self.window_state.generation,
+                        "desired_revision": self.desired_revision,
+                        "shortcuts": shortcuts,
+                    })),
+                    None,
+                );
+                Task::none()
+            }
+            ControllerOperation::CreatePrompt {
+                name,
+                content,
+                hotkey,
+                hotkey_enabled,
+            } => {
+                let mut tasks = vec![self.update(Message::NewPressed)];
+                tasks.push(self.update(Message::FormNameChanged(name)));
+                tasks.push(
+                    self.update(Message::FormContentEdited(text_editor::Action::Edit(
+                        text_editor::Edit::Paste(Arc::new(content)),
+                    ))),
+                );
+                if let Some(hotkey) = hotkey {
+                    if !hotkey.trim().is_empty() {
+                        tasks.push(self.update(Message::FormHotkeyCaptured(hotkey)));
+                    }
+                }
+                if !hotkey_enabled.unwrap_or(true) {
+                    tasks.push(self.update(Message::FormHotkeyEnabledToggled(false)));
+                }
+                tasks.push(self.update(Message::FormSave));
+                if !self.form_errors.is_empty() || self.new_form.is_some() {
+                    return failed("prompt form validation failed".to_string());
+                }
+                let created = self.selected_id.clone();
+                match created {
+                    Some(id) => {
+                        respond(
+                            true,
+                            Some(serde_json::json!({
+                                "prompt_id": id,
+                                "revision": self.desired_revision,
+                            })),
+                            None,
+                        );
+                    }
+                    None => {
+                        return failed("form save did not create a prompt".to_string());
+                    }
+                }
+                Task::batch(tasks)
+            }
+            ControllerOperation::EditPrompt {
+                id,
+                name,
+                content,
+                hotkey,
+                hotkey_enabled,
+            } => {
+                let mut tasks = vec![self.update(Message::EditPressed(id.clone()))];
+                if let Some(name) = name {
+                    tasks.push(self.update(Message::FormNameChanged(name)));
+                }
+                if let Some(content) = content {
+                    tasks.push(
+                        self.update(Message::FormContentEdited(text_editor::Action::SelectAll)),
+                    );
+                    tasks.push(
+                        self.update(Message::FormContentEdited(text_editor::Action::Edit(
+                            text_editor::Edit::Paste(Arc::new(content)),
+                        ))),
+                    );
+                }
+                if let Some(hotkey) = hotkey {
+                    if hotkey.trim().is_empty() {
+                        tasks.push(self.update(Message::FormHotkeyClearPressed));
+                    } else {
+                        tasks.push(self.update(Message::FormHotkeyCaptured(hotkey)));
+                    }
+                }
+                if let Some(enabled) = hotkey_enabled {
+                    tasks.push(self.update(Message::FormHotkeyEnabledToggled(enabled)));
+                }
+                tasks.push(self.update(Message::FormSave));
+                if self.form_errors.is_empty()
+                    && self.new_form.is_none()
+                    && self.prompt_cloned_by_id(&id).is_some()
+                {
+                    respond(
+                        true,
+                        Some(serde_json::json!({
+                            "prompt_id": id,
+                            "revision": self.desired_revision,
+                        })),
+                        None,
+                    );
+                } else {
+                    return failed(format!("prompt {id} missing after edit"));
+                }
+                Task::batch(tasks)
+            }
+            ControllerOperation::DeletePrompt { id } => {
+                if self.prompt_cloned_by_id(&id).is_none() {
+                    return failed(format!("no such prompt {id}"));
+                }
+                let mut tasks = vec![self.update(Message::DeletePressed(id.clone()))];
+                tasks.push(self.update(Message::DeleteConfirmPressed(id.clone())));
+                if self.prompt_cloned_by_id(&id).is_none() {
+                    respond(
+                        true,
+                        Some(serde_json::json!({
+                            "prompt_id": id,
+                            "revision": self.desired_revision,
+                        })),
+                        None,
+                    );
+                } else {
+                    return failed(format!("prompt {id} still present after delete"));
+                }
+                Task::batch(tasks)
+            }
+            ControllerOperation::ToggleGlobalHotkeys { enabled } => {
+                let task = self.update(Message::SettingsHotkeyToggled(enabled));
+                respond(
+                    true,
+                    Some(serde_json::json!({ "hotkeys_enabled": enabled })),
+                    None,
+                );
+                task
+            }
+            ControllerOperation::ImportFixture { backup, mode } => {
+                let backup_json = backup.to_string();
+                match crate::prompt_backup::PromptBackup::from_json(&backup_json) {
+                    Ok(validated) => {
+                        match mode.as_deref() {
+                            None | Some("merge") | Some("replace") => {}
+                            Some(other) => return failed(format!("unknown import mode: {other}")),
+                        }
+                        self.pending_import_backup = Some(validated);
+                        self.pending_import_mode = match mode.as_deref() {
+                            Some("replace") => ImportMode::ReplaceAll,
+                            _ => ImportMode::Merge,
+                        };
+                        let task = self.update(Message::ImportConfirmPressed);
+                        respond(
+                            true,
+                            Some(serde_json::json!({
+                                "revision": self.desired_revision,
+                            })),
+                            None,
+                        );
+                        task
+                    }
+                    Err(error) => failed(format!("import fixture invalid: {error}")),
+                }
+            }
+            ControllerOperation::OpenExportDialog {} => {
+                // The native chooser opens through the existing rfd path;
+                // the test then drives it via AT-SPI. The terminal result
+                // arrives through SettingsExportFinished, observed through
+                // events — this reply only confirms dispatch.
+                let task = self.update(Message::SettingsExportPressed);
+                respond(true, Some(serde_json::json!({ "dispatched": true })), None);
+                task
+            }
+            ControllerOperation::OpenImportDialog {} => {
+                let task = self.update(Message::SettingsImportPressed);
+                respond(true, Some(serde_json::json!({ "dispatched": true })), None);
+                task
+            }
+            ControllerOperation::CloseWindow {} => match self.main_window_id {
+                Some(id) => {
+                    let task = self.update(Message::CloseRequested(id));
+                    respond(
+                        true,
+                        Some(serde_json::json!({
+                            "dispatched": true,
+                            "window_id_assigned": self.main_window_id.is_some(),
+                            "window_generation": self.window_state.generation,
+                        })),
+                        None,
+                    );
+                    task
+                }
+                None => failed("no window to close".to_string()),
+            },
+            ControllerOperation::ShowWindow {} => {
+                let task = self.request_show();
+                respond(
+                    true,
+                    Some(serde_json::json!({
+                        "dispatched": true,
+                        "window_id_assigned": self.main_window_id.is_some(),
+                        "window_generation": self.window_state.generation,
+                    })),
+                    None,
+                );
+                task
+            }
+            ControllerOperation::Quit {} => {
+                respond(true, Some(serde_json::json!({ "dispatched": true })), None);
+                Task::done(Message::BeginQuit)
+            }
+        }
+    }
+
+    /// Runs the existing paste orchestration for one activated prompt:
+    /// same cache lookup, busy policy, clipboard/paste requests and use
+    /// counting as the polled path. Shared by native polling and portal
+    /// stream activations.
+    fn activate_prompt_hotkey(&mut self, prompt_id: &PromptId) -> Task<Message> {
+        if self.pending_hotkey_name.is_some() {
+            self.show_notification(NotificationEvent::PasteBusy);
+            return Task::none();
+        }
+        let Some(p) = self.prompt_cloned_by_id(prompt_id) else {
+            return Task::none();
+        };
+        if self.runtime.mode() == RuntimeMode::Synthetic
+            && !self.runtime.native_consent_authorized()
+        {
+            self.show_notification(NotificationEvent::PastePermissionDenied);
+            return Task::none();
+        }
+        match crate::hotkeys::request_paste(Arc::clone(&self.runtime), p.content) {
+            crate::hotkeys::PasteRequest::Started => {
+                if crate::hotkeys::is_paste_permission_denied() {
+                    self.show_notification(NotificationEvent::PastePermissionDenied);
+                } else {
+                    self.pending_hotkey_name = Some(p.name);
+                    self.show_notification(NotificationEvent::PasteRequested);
+                }
+            }
+            crate::hotkeys::PasteRequest::ClipboardRequired(content) => {
+                self.pending_hotkey_name = Some(p.name);
+                self.pending_native_paste_content = Some(content.clone());
+                self.show_notification(NotificationEvent::PasteRequested);
+
+                return iced::clipboard::write(content)
+                    .chain(iced::clipboard::read().map(Message::NativeClipboardPrepared));
+            }
+            crate::hotkeys::PasteRequest::Busy => {
+                self.show_notification(NotificationEvent::PasteBusy);
+            }
+            crate::hotkeys::PasteRequest::Unavailable => {
+                self.show_notification(NotificationEvent::PasteFailed);
+            }
+        }
+        Task::none()
+    }
+
+    /// Handles one backend shortcut event. Acknowledgements update the
+    /// readiness map (current revision and still-desired prompts only);
+    /// activations route immediately without polling dependence; backend
+    /// loss clears Active badges at once.
+    fn handle_hotkey_service_event(&mut self, event: HotkeyEvent) -> Task<Message> {
+        match event {
+            HotkeyEvent::Acknowledged(ack) => {
+                let status = ack.status;
+                self.diagnostics.record(
+                    "shortcut_acknowledged",
+                    Some(ack.revision),
+                    Some(self.window_state.generation),
+                    Some(format!("status={status:?}")),
+                );
+                if self.apply_shortcut_acknowledgement(ack) {
+                    match status {
+                        ShortcutStatus::Active => {
+                            // Valid success resolves the previous shortcut
+                            // warning, if any.
+                            if let Some(id) = self.shortcut_notice.take() {
+                                self.notifications.dismiss(id);
+                            }
+                            self.status_message.clear();
+                        }
+                        ShortcutStatus::AwaitingConsent => {
+                            self.show_notification(NotificationEvent::ShortcutAwaitingConsent);
+                        }
+                        ShortcutStatus::Failed => {
+                            self.publish_shortcut_notice(NotificationEvent::ShortcutBindingFailed);
+                        }
+                        ShortcutStatus::Cancelled => {
+                            self.publish_shortcut_notice(
+                                NotificationEvent::ShortcutBindingCancelled,
+                            );
+                        }
+                        ShortcutStatus::Unavailable => {
+                            self.publish_shortcut_notice(
+                                NotificationEvent::ShortcutBindingUnavailable,
+                            );
+                        }
+                        ShortcutStatus::Pending
+                        | ShortcutStatus::AwaitingWindow
+                        | ShortcutStatus::Inactive => {}
+                    }
+                }
+                Task::none()
+            }
+            HotkeyEvent::Activated {
+                revision,
+                runtime_id,
+            } => {
+                self.diagnostics.record(
+                    "shortcut_activated",
+                    Some(revision),
+                    Some(self.window_state.generation),
+                    None,
+                );
+                // Stale activations (older revision, deleted prompt or
+                // non-Active route) are rejected, never routed.
+                if revision != self.desired_revision {
+                    return Task::none();
+                }
+                match self.runtime_to_prompt(runtime_id) {
+                    Some(prompt_id) => self.activate_prompt_hotkey(&prompt_id),
+                    None => Task::none(),
+                }
+            }
+            HotkeyEvent::BackendUnavailable(error) => {
+                for ack in self.shortcut_states.values_mut() {
+                    if ack.status != ShortcutStatus::Inactive {
+                        ack.status = ShortcutStatus::Unavailable;
+                        ack.error_code = Some(error);
+                    }
+                }
+                self.status_message = format!("Shortcut backend unavailable: {error}");
+                Task::none()
+            }
+        }
+    }
+
+    /// Ordered quit: flushes structured diagnostics (when configured),
+    /// cancels the in-flight portal request, closes the session and shuts
+    /// down backend services within a bounded deadline, then exits.
+    /// Process exit releases remaining owned bus resources atomically;
+    /// the deadline only bounds how long well-behaved cleanup may take.
+    fn begin_ordered_quit(&mut self) -> Task<Message> {
+        let shutdown_timeout = self.runtime.config();
+        let shutdown_timeout =
+            std::time::Duration::from_millis(shutdown_timeout.shutdown_timeout_ms);
+        match self.hotkey_service {
+            Some(ref svc) => Task::batch([
+                svc.shutdown(),
+                Task::perform(
+                    async move {
+                        tokio::time::sleep(shutdown_timeout).await;
+                    },
+                    |_| Message::QuitForced,
+                ),
+            ]),
+            None => {
+                self.diagnostics
+                    .record_shutdown_outcome(crate::desktop::ShutdownOutcome::Released);
+                self.flush_diagnostics();
+                iced::exit()
+            }
+        }
+    }
+
+    /// Writes buffered desktop events to the configured private evidence
+    /// file. Unset path disables file output; every failure is reported,
+    /// never a silent fake report.
+    fn flush_diagnostics(&mut self) {
+        let Some(path) = self.runtime.diagnostics_path() else {
+            return;
+        };
+        match self.diagnostics.flush_to_file(path) {
+            Ok(count) => {
+                tracing::debug!(
+                    "flushed {count} desktop events for run {}",
+                    self.diagnostics.run_id()
+                );
+            }
+            Err(error) => {
+                self.status_message = format!("Diagnostics export failed: {error}");
+            }
+        }
+    }
+
+    /// Routes an event-driven tray signal into the canonical window intents.
+    ///
+    /// Show/Quit follow the same routes as the legacy polled events. A
+    /// failed or lost tray host while windowless requests one fallback
+    /// window so the app can never be trapped invisible; the canonical
+    /// open path coalesces duplicates.
+    fn handle_tray_signal(&mut self, signal: TraySignal) -> Task<Message> {
+        self.diagnostics.record(
+            "tray_callback",
+            Some(self.desired_revision),
+            Some(self.window_state.generation),
+            Some(format!("signal={signal:?}")),
+        );
+        match signal {
+            TraySignal::ShowRequested => Task::done(Message::ShowWindow(self.main_window_id)),
+            TraySignal::QuitRequested => Task::done(Message::BeginQuit),
+            TraySignal::Ready | TraySignal::HostOnline => {
+                self.tray_state = TrayState::Ready;
+                Task::none()
+            }
+            TraySignal::Unavailable(_) => {
+                self.tray_state = TrayState::Unavailable;
+                self.tray_fallback_task()
+            }
+            TraySignal::HostOffline => {
+                self.tray_state = TrayState::HostOffline;
+                self.tray_fallback_task()
+            }
+        }
+    }
+
+    fn should_request_tray_fallback(&self) -> bool {
+        self.main_window_id.is_none() && !self.window_open_pending
+    }
+
+    /// Whether the 50ms hotkey tick subscription is needed: native event
+    /// source, any acknowledged-or-pending shortcut, or an unfinished
+    /// paste outcome. Portal activations never depend on this tick.
+    fn needs_hotkey_tick(&self) -> bool {
+        if self.hotkey_service.is_none() || !self.settings.hotkeys_enabled {
             return false;
         }
-        self.window_open_pending = true;
-        true
-    }
-
-    pub(crate) fn record_window_opened(&mut self, id: iced::window::Id) {
-        self.main_window_id = Some(id);
-        self.window_open_pending = false;
-    }
-
-    pub(crate) fn record_window_closed(&mut self, id: iced::window::Id) {
-        if self.main_window_id == Some(id) {
-            self.main_window_id = None;
+        if self.pending_hotkey_name.is_some() || self.pending_native_paste_content.is_some() {
+            return true;
         }
-        self.window_open_pending = false;
+        if crate::platform::hotkey_backend_kind() == crate::platform::HotkeyBackendKind::Native {
+            return true;
+        }
+        self.shortcut_states.values().any(|ack| {
+            matches!(
+                ack.status,
+                ShortcutStatus::Active
+                    | ShortcutStatus::Pending
+                    | ShortcutStatus::AwaitingConsent
+                    | ShortcutStatus::AwaitingWindow
+            )
+        })
+    }
+
+    fn tray_fallback_task(&self) -> Task<Message> {
+        if self.should_request_tray_fallback() {
+            Task::done(Message::ShowWindow(None))
+        } else {
+            Task::none()
+        }
     }
 
     pub(crate) fn is_smoke_mode(&self) -> bool {
@@ -1202,13 +2381,22 @@ impl JamePromptApp {
             Subscription::none()
         };
 
-        let hotkey_tick = if self.hotkey_service.is_some()
-            && self.settings.hotkeys_enabled
-            && !self.hotkey_ids.is_empty()
-        {
+        // Native activations stay on the polled path (X11 contract) and
+        // paste outcomes must be collected while a paste is pending even
+        // after the last shortcut was deleted. Portal activations arrive
+        // through the hotkey service subscription below, never this tick.
+        let hotkey_tick = if self.needs_hotkey_tick() {
             iced::time::every(Duration::from_millis(50)).map(|_| Message::HotkeyTick)
         } else {
             Subscription::none()
+        };
+
+        // Portal acknowledgements, activations and backend loss are
+        // stream-driven whenever the service exists — including with zero
+        // active ids, so loss can never hide behind an empty map.
+        let hotkey_service_events = match self.hotkey_service {
+            Some(ref svc) => svc.subscription().map(Message::HotkeyServiceEvent),
+            None => Subscription::none(),
         };
 
         let keyboard_capture = if self.listening_for_hotkey {
@@ -1225,23 +2413,55 @@ impl JamePromptApp {
         // Window close requests (X button) -> hide to tray
         let close_requests = iced::window::close_requests().map(Message::CloseRequested);
 
+        // Windows keeps the 100ms tray-icon polling path. Linux uses the
+        // persistent event-driven ksni subscription; no tray timer exists.
+        #[cfg(target_os = "windows")]
         let tray_events = if self.tray.is_some() {
             iced::time::every(Duration::from_millis(100)).map(|_| Message::TrayTick)
         } else {
             Subscription::none()
         };
+        #[cfg(target_os = "windows")]
+        let tray_signals = Subscription::none();
+        #[cfg(not(target_os = "windows"))]
+        let tray_events = Subscription::none();
+        #[cfg(not(target_os = "windows"))]
+        let tray_signals =
+            crate::tray::subscription(self.tray_subscription_instance, Arc::clone(&self.runtime))
+                .map(Message::TraySignal);
 
         let resize_events =
             iced::window::resize_events().map(|(_id, size)| Message::WindowResized(size));
+
+        // Supplemental compositor observations. CloseRequested stays on
+        // the dedicated close_requests subscription; it is filtered here
+        // so one physical close cannot drive two intents.
+        let desktop_window_events = iced::window::events().filter_map(|(id, event)| {
+            if matches!(event, iced::window::Event::CloseRequested) {
+                None
+            } else {
+                Some(Message::DesktopWindowEvent { id, event })
+            }
+        });
+
+        #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+        let controller_commands =
+            iced::time::every(Duration::from_millis(20)).map(|_| Message::ControllerPoll);
+        #[cfg(not(all(target_os = "linux", feature = "desktop-integration-tests")))]
+        let controller_commands = Subscription::none();
 
         Subscription::batch([
             smoke_exit,
             smoke_tick,
             hotkey_tick,
+            hotkey_service_events,
+            controller_commands,
             keyboard_capture,
             close_requests,
             tray_events,
+            tray_signals,
             resize_events,
+            desktop_window_events,
         ])
     }
 
@@ -1287,13 +2507,15 @@ impl JamePromptApp {
                     self.status_message.clear();
                 }
                 Message::DeleteConfirmPressed(id) => {
-                    self.unregister_prompt_hotkey(&id);
+                    // The database governs: a failed delete leaves the
+                    // previous desired set and active status untouched.
                     match self.db.delete(&id) {
                         Ok(()) => {
                             self.remove_prompt_cache(&id);
                             self.selected_id = None;
                             self.pending_delete_id = None;
                             self.refresh_prompts("");
+                            self.reconcile_shortcuts_after_commit();
                         }
                         Err(_) => {
                             self.show_notification(NotificationEvent::DeleteFailed);
@@ -1324,48 +2546,76 @@ impl JamePromptApp {
                         }
                     }
 
-                    if let Some(hotkey_id) = HotkeyService::poll_event() {
-                        if self.pending_hotkey_name.is_some() {
-                            self.show_notification(NotificationEvent::PasteBusy);
-                            return Task::none();
-                        }
-
-                        if let Some(prompt_id) = self.hotkey_ids.get(&hotkey_id) {
-                            if let Some(p) = self.prompt_cloned_by_id(prompt_id) {
-                                match crate::hotkeys::request_paste(p.content) {
-                                    crate::hotkeys::PasteRequest::Started => {
-                                        if crate::hotkeys::is_paste_permission_denied() {
-                                            self.show_notification(
-                                                NotificationEvent::PastePermissionDenied,
-                                            );
-                                        } else {
-                                            self.pending_hotkey_name = Some(p.name);
-                                            self.show_notification(
-                                                NotificationEvent::PasteRequested,
-                                            );
-                                        }
-                                    }
-                                    crate::hotkeys::PasteRequest::ClipboardRequired(content) => {
-                                        self.pending_hotkey_name = Some(p.name);
-                                        self.pending_native_paste_content = Some(content.clone());
-                                        self.show_notification(NotificationEvent::PasteRequested);
-
-                                        return iced::clipboard::write(content).chain(
-                                            iced::clipboard::read()
-                                                .map(Message::NativeClipboardPrepared),
-                                        );
-                                    }
-                                    crate::hotkeys::PasteRequest::Busy => {
-                                        self.show_notification(NotificationEvent::PasteBusy);
-                                    }
-                                    crate::hotkeys::PasteRequest::Unavailable => {
-                                        self.show_notification(NotificationEvent::PasteFailed);
-                                    }
-                                }
-                                return Task::none();
+                    // Native polled activations only. Portal activations
+                    // arrive through HotkeyServiceEvent without polling.
+                    if crate::platform::hotkey_backend_kind()
+                        == crate::platform::HotkeyBackendKind::Native
+                    {
+                        if let Some(hotkey_id) = HotkeyService::poll_native_event() {
+                            if let Some(prompt_id) = self.runtime_to_prompt(hotkey_id) {
+                                return self.activate_prompt_hotkey(&prompt_id);
                             }
                         }
                     }
+                }
+                Message::HotkeyServiceEvent(event) => {
+                    return self.handle_hotkey_service_event(event);
+                }
+                Message::RetryShortcutBinding => {
+                    if let Some(ref svc) = self.hotkey_service {
+                        if svc.retry_pending().is_ok() {
+                            // Re-mark pending so the UI reflects the retry
+                            // until fresh acknowledgements arrive.
+                            for ack in self.shortcut_states.values_mut() {
+                                if matches!(
+                                    ack.status,
+                                    ShortcutStatus::Failed
+                                        | ShortcutStatus::Cancelled
+                                        | ShortcutStatus::Unavailable
+                                ) {
+                                    ack.status = ShortcutStatus::Pending;
+                                    ack.error_code = None;
+                                }
+                            }
+                        }
+                    }
+                }
+                Message::ConfigureShortcutBinding => {
+                    // GlobalShortcuts v1 has no ConfigureShortcuts: direct
+                    // the user to the desktop keyboard settings instead of
+                    // calling a private backend interface.
+                    let _ = std::process::Command::new("gnome-control-center")
+                        .arg("keyboard")
+                        .spawn();
+                    self.status_message =
+                        "Open GNOME Settings → Keyboard to change an existing shortcut".to_string();
+                }
+                Message::DesktopShutdownFinished(result) => {
+                    self.diagnostics.record_shutdown_outcome(result);
+                    self.flush_diagnostics();
+                    if let crate::desktop::ShutdownOutcome::Forced(error) = result {
+                        tracing::warn!("desktop shutdown forced: {error}");
+                    }
+                    return iced::exit();
+                }
+                #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+                Message::ControllerPoll => {
+                    if let Some(command) = crate::desktop_test_support::poll_command() {
+                        return self.apply_controller_command(command);
+                    }
+                }
+                Message::BeginQuit => {
+                    return self.begin_ordered_quit();
+                }
+                Message::QuitForced => {
+                    self.diagnostics.record_shutdown_outcome(
+                        crate::desktop::ShutdownOutcome::Forced(
+                            crate::desktop::DesktopErrorCode::ShutdownTimeout,
+                        ),
+                    );
+                    self.flush_diagnostics();
+                    tracing::warn!("desktop shutdown deadline elapsed; forcing exit");
+                    return iced::exit();
                 }
                 Message::NativeClipboardPrepared(actual) => {
                     let Some(expected) = self.pending_native_paste_content.take() else {
@@ -1443,25 +2693,13 @@ impl JamePromptApp {
                                 };
                                 match self.db.update(&prompt) {
                                     Ok(()) => {
-                                        self.unregister_prompt_hotkey(&editing_id);
-                                        // Register new hotkey if provided and enabled
-                                        if let Some(ref hk) = prompt.hotkey {
-                                            if prompt.hotkey_enabled
-                                                && self.settings.hotkeys_enabled
-                                            {
-                                                if let Some(ref svc) = self.hotkey_service {
-                                                    if let Some(hotkey_id) =
-                                                        svc.register(&prompt.id, &prompt.name, hk)
-                                                    {
-                                                        self.hotkey_ids
-                                                            .insert(hotkey_id, editing_id.clone());
-                                                    }
-                                                }
-                                            }
-                                        }
                                         self.selected_id = Some(editing_id.clone());
                                         self.sync_prompt_cache_from_db(&editing_id);
                                         self.refresh_prompts("");
+                                        // One snapshot after the successful
+                                        // commit. Content-only edits are
+                                        // no-ops: no new session, no dialog.
+                                        self.reconcile_shortcuts_after_commit();
                                     }
                                     Err(_) => {
                                         self.show_notification(NotificationEvent::SaveFailed);
@@ -1490,23 +2728,13 @@ impl JamePromptApp {
                                 };
                                 match self.db.insert(&prompt) {
                                     Ok(new_id) => {
-                                        if let Some(ref hk) = prompt.hotkey {
-                                            if prompt.hotkey_enabled
-                                                && self.settings.hotkeys_enabled
-                                            {
-                                                if let Some(ref svc) = self.hotkey_service {
-                                                    if let Some(hotkey_id) =
-                                                        svc.register(&new_id, &prompt.name, hk)
-                                                    {
-                                                        self.hotkey_ids
-                                                            .insert(hotkey_id, new_id.clone());
-                                                    }
-                                                }
-                                            }
-                                        }
                                         self.selected_id = Some(new_id.clone());
                                         self.sync_prompt_cache_from_db(&new_id);
                                         self.refresh_prompts("");
+                                        // Immediately Pending after the
+                                        // successful insert — never Active
+                                        // before the backend acknowledges.
+                                        self.reconcile_shortcuts_after_commit();
                                     }
                                     Err(_) => {
                                         self.show_notification(NotificationEvent::SaveFailed);
@@ -1596,31 +2824,17 @@ impl JamePromptApp {
                 }
                 Message::SettingsHotkeyToggled(enabled) => {
                     self.settings.hotkeys_enabled = enabled;
-                    if !enabled {
-                        // Unregister ALL hotkeys
-                        if let Some(ref svc) = self.hotkey_service {
-                            for &hotkey_id in self.hotkey_ids.keys() {
-                                svc.unregister(hotkey_id);
-                            }
-                        }
-                        self.hotkey_ids.clear();
-                        self.status_message.clear();
-                    } else {
-                        crate::hotkeys::prewarm_permission();
-                        // Re-register all enabled prompts
-                        if let Some(ref svc) = self.hotkey_service {
-                            for p in &self.all_prompts {
-                                if p.hotkey_enabled {
-                                    if let Some(ref hk) = p.hotkey {
-                                        if let Some(hotkey_id) = svc.register(&p.id, &p.name, hk) {
-                                            self.hotkey_ids.insert(hotkey_id, p.id.clone());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        self.status_message.clear();
+                    if enabled
+                        && (self.runtime.mode() == RuntimeMode::Production
+                            || self.runtime.native_consent_authorized())
+                    {
+                        crate::hotkeys::prewarm_permission(Arc::clone(&self.runtime));
                     }
+                    // Disabled reconciles to the empty snapshot: the
+                    // worker cancels, closes the session and acknowledges
+                    // Inactive. Re-enabled reconciles one full snapshot.
+                    self.reconcile_shortcuts_after_commit();
+                    self.status_message.clear();
                 }
                 Message::SettingsAutostartToggled(enabled) => {
                     self.settings.autostart_enabled = enabled;
@@ -1631,13 +2845,18 @@ impl JamePromptApp {
                     self.status_message.clear();
                 }
                 Message::SettingsSave => {
-                    let path = get_settings_path();
+                    let path = self.runtime.settings_path();
                     let settings = self.settings.clone();
+                    let allow_autostart = self.runtime.mode() == RuntimeMode::Production;
                     self.status_message.clear();
                     return Task::perform(
                         async move {
                             SettingsService::save_and_apply(&settings, &path, |enabled| {
-                                sync_autostart_enabled(enabled)
+                                if allow_autostart {
+                                    sync_autostart_enabled(enabled)
+                                } else {
+                                    Ok(())
+                                }
                             })
                             .map_err(|error| error.to_string())
                         },
@@ -1722,32 +2941,101 @@ impl JamePromptApp {
                     self.show_info = false;
                     self.status_message.clear();
                 }
-                // Tray: Window close requested -> hide to tray
+                // Tray: Window close requested -> hide to tray.
+                // Production close follows the canonical lifecycle in
+                // main.update_application; this arm serves smoke mode and
+                // direct intent routing with the same single owner.
                 Message::CloseRequested(id) => {
-                    self.record_window_closed(id);
                     if should_exit_on_close_request(self.smoke_mode) {
+                        let _ = self.note_window_closed(id);
                         self.status_message.clear();
                         return iced::exit();
                     }
 
-                    self.show_notification(NotificationEvent::WindowHiddenToTray);
+                    let closing_current = self.window_state.id == Some(id)
+                        && self.window_state.phase == WindowPhase::Open;
+                    let task = self.request_close(id);
+                    if closing_current {
+                        self.show_notification(NotificationEvent::WindowHiddenToTray);
+                    }
+                    return task;
                 }
                 Message::ShowWindow(id) => {
-                    if let Some(id) = id.or(self.main_window_id) {
-                        self.main_window_id = Some(id);
-                        self.show_notification(NotificationEvent::WindowRestored);
-                        return Task::batch([
-                            iced::window::set_mode(id, iced::window::Mode::Windowed),
-                            iced::window::gain_focus(id),
-                        ]);
+                    return match id {
+                        Some(id) => self.present_window(id),
+                        None => self.request_show(),
+                    };
+                }
+                Message::WindowOpened { generation, id } => {
+                    return self.note_window_opened(generation, id);
+                }
+                Message::DesktopWindowEvent { id, event } => {
+                    return self.handle_desktop_window_event(id, event);
+                }
+                #[cfg(target_os = "linux")]
+                Message::ParentExported { generation, result } => {
+                    match result {
+                        Ok(lease) => {
+                            self.diagnostics.record(
+                                "parent_export_finished",
+                                Some(self.desired_revision),
+                                Some(generation),
+                                Some(format!("elapsed_ms={}", lease.export_elapsed_ms())),
+                            );
+                            if lease.is_current_for(generation)
+                                && self.window_state.generation == generation
+                            {
+                                let context = ParentContext {
+                                    generation: lease.generation(),
+                                    handle: lease.handle(),
+                                };
+                                self.parent_lease = Some(lease);
+                                // User-initiated consent parents to the
+                                // live window from here on.
+                                if let Some(ref svc) = self.hotkey_service {
+                                    if let Err(error) = svc.set_parent(Some(context)) {
+                                        self.status_message =
+                                            format!("Shortcut parent unavailable: {error}");
+                                    }
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            self.status_message = format!("Window parent unavailable: {error}");
+                        }
                     }
-
-                    if self.begin_window_open() {
-                        return crate::window_lifecycle::open()
-                            .map(|id| Message::ShowWindow(Some(id)));
+                }
+                Message::InteractionCancelled { generation, result } => {
+                    if !self.close_awaiting_cancel || self.window_state.generation != generation {
+                        return Task::none();
                     }
-
-                    self.show_notification(NotificationEvent::WindowRestoreFailed);
+                    self.close_awaiting_cancel = false;
+                    if let CancelOutcome::Failed(error) = result {
+                        self.status_message = format!("Shortcut cleanup failed: {error}");
+                        let Some(id) = self.window_state.id else {
+                            return Task::none();
+                        };
+                        let effects = crate::window_lifecycle::transition(
+                            &mut self.window_state,
+                            WindowIntent::AbortClose(id),
+                        );
+                        return self.apply_window_effects(effects);
+                    }
+                    // The worker confirmed release: drop the lease (and
+                    // clear the worker parent) before destroying the
+                    // surface. A stale Response can no longer reinstate
+                    // routes for a destroyed window.
+                    #[cfg(target_os = "linux")]
+                    {
+                        self.parent_lease = None;
+                        if let Some(ref svc) = self.hotkey_service {
+                            let _ = svc.set_parent(None);
+                        }
+                    }
+                    return match self.window_state.id {
+                        Some(id) => crate::window_lifecycle::close(id),
+                        None => Task::none(),
+                    };
                 }
                 Message::WindowResized(size) => {
                     self.content_width = size.width;
@@ -1763,6 +3051,7 @@ impl JamePromptApp {
                 Message::SmokeExitRequested => {
                     return iced::exit();
                 }
+                #[cfg(target_os = "windows")]
                 Message::TrayTick => {
                     pump_platform_events();
 
@@ -1774,6 +3063,11 @@ impl JamePromptApp {
                             TrayEvent::QuitRequested => iced::exit(),
                         };
                     }
+                }
+                #[cfg(not(target_os = "windows"))]
+                Message::TrayTick => {}
+                Message::TraySignal(signal) => {
+                    return self.handle_tray_signal(signal);
                 }
             }
             Task::none()
@@ -2048,6 +3342,7 @@ impl JamePromptApp {
             if let Some(id) = &self.selected_id {
                 if let Some(p) = self.prompt_ref_by_id(id) {
                     let hotkey_foreground = hotkey_badge_foreground_color(&self.theme());
+                    let readiness_row = self.shortcut_readiness_row(&p.id, p.hotkey.as_deref());
                     let hotkey_row: Element<'_, Message> = if let Some(hk) = &p.hotkey {
                         container(
                             row![
@@ -2076,6 +3371,7 @@ impl JamePromptApp {
                         text(format!("Used {} times", p.use_count)).size(PROMPT_METADATA_TEXT_SIZE),
                         Space::new().height(DETAIL_SECTION_SPACING),
                         hotkey_row,
+                        readiness_row,
                         Space::new().height(DETAIL_SECTION_SPACING),
                         scrollable(
                             text(&p.content)
@@ -2147,6 +3443,66 @@ impl JamePromptApp {
             .width(Length::Fill)
             .into()
         })
+    }
+
+    /// Readiness badge for a prompt: requested key plus the backend
+    /// state, and the backend-assigned trigger when Active and different
+    /// from the request. Retry/Configure stay keyboard-focusable with
+    /// descriptive text; the requested input is never overwritten with
+    /// the assigned description.
+    fn shortcut_readiness_row(
+        &self,
+        prompt_id: &PromptId,
+        requested: Option<&str>,
+    ) -> Element<'_, Message> {
+        let Some(requested) = requested.filter(|key| !key.trim().is_empty()) else {
+            return Space::new().height(0).into();
+        };
+        let _ = requested;
+        let Some(ack) = self.shortcut_states.get(prompt_id) else {
+            return Space::new().height(0).into();
+        };
+        let mut items: Vec<Element<'_, Message>> =
+            vec![text(format!("Shortcut {}", status_label(ack.status)))
+                .size(PROMPT_METADATA_TEXT_SIZE)
+                .into()];
+        if ack.status == ShortcutStatus::Active {
+            if let Some(actual) = ack.trigger_description.as_deref() {
+                let desired = self
+                    .last_desired_specs
+                    .iter()
+                    .find(|spec| spec.prompt_id == *prompt_id)
+                    .map(|spec| spec.preferred_trigger.as_str())
+                    .unwrap_or("");
+                if !actual.is_empty() && actual != desired {
+                    items.push(
+                        text(format!("assigned by system: {actual}"))
+                            .size(PROMPT_METADATA_TEXT_SIZE)
+                            .into(),
+                    );
+                }
+            }
+        }
+        if matches!(
+            ack.status,
+            ShortcutStatus::Failed | ShortcutStatus::Cancelled | ShortcutStatus::Unavailable
+        ) {
+            items.push(
+                button(text("Retry shortcut"))
+                    .on_press(Message::RetryShortcutBinding)
+                    .padding(CONTROL_PADDING)
+                    .style(button::secondary)
+                    .into(),
+            );
+            items.push(
+                button(text("Change in system settings"))
+                    .on_press(Message::ConfigureShortcutBinding)
+                    .padding(CONTROL_PADDING)
+                    .style(button::secondary)
+                    .into(),
+            );
+        }
+        row(items).spacing(8).into()
     }
 
     fn view_new_prompt_modal(&self) -> Element<'_, Message> {
@@ -4013,15 +5369,87 @@ mod tests {
     #[test]
     fn window_lifecycle_coalesces_repeated_open_requests() {
         let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
-        assert!(app.begin_window_open());
-        assert!(!app.begin_window_open());
+        let _ = app.request_show();
+        assert!(app.window_open_pending);
+        // Repeated show while opening carries no new generation.
+        let generation = app.window_state.generation;
+        let _ = app.request_show();
+        assert_eq!(app.window_state.generation, generation);
 
         let id = iced::window::Id::unique();
-        app.record_window_opened(id);
-        assert!(!app.begin_window_open());
+        let _ = app.note_window_opened(generation, id);
+        assert!(!app.window_open_pending);
 
-        app.record_window_closed(id);
-        assert!(app.begin_window_open());
+        let _ = app.note_window_closed(id);
+        assert!(app.window_state.phase == WindowPhase::Absent);
+    }
+
+    #[test]
+    fn repeated_show_while_opening_coalesces_to_one_generation() {
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+
+        let _ = app.request_show();
+        let generation = app.window_state.generation;
+        assert_eq!(generation, 1);
+
+        let _ = app.request_show();
+        let _ = app.request_show();
+
+        assert_eq!(app.window_state.generation, generation);
+        assert_eq!(app.window_state.phase, WindowPhase::Opening);
+    }
+
+    #[test]
+    fn stale_opened_completion_does_not_assign_id() {
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+        let _ = app.request_show();
+
+        let stale = iced::window::Id::unique();
+        let _ = app.note_window_opened(99, stale);
+
+        assert_eq!(app.window_state.id, None);
+        assert_eq!(app.main_window_id, None);
+        assert!(app.window_open_pending);
+    }
+
+    #[test]
+    fn show_during_closing_reopens_once_on_closed_event() {
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+        let _ = app.request_show();
+        let id = iced::window::Id::unique();
+        let _ = app.note_window_opened(1, id);
+        let _ = app.request_close(id);
+        assert_eq!(app.window_state.phase, WindowPhase::Closing);
+
+        let _ = app.request_show();
+        let _ = app.note_window_closed(id);
+
+        assert_eq!(app.window_state.phase, WindowPhase::Opening);
+        assert_eq!(app.window_state.generation, 2);
+    }
+
+    #[test]
+    fn desktop_closed_event_is_authoritative_destruction() {
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+        let _ = app.request_show();
+        let id = iced::window::Id::unique();
+        let _ = app.note_window_opened(1, id);
+
+        let _ = app.handle_desktop_window_event(id, iced::window::Event::Closed);
+
+        assert_eq!(app.window_state.phase, WindowPhase::Absent);
+        assert_eq!(app.main_window_id, None);
+    }
+
+    #[test]
+    fn desktop_focus_events_track_observed_focus_only() {
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+        let id = iced::window::Id::unique();
+
+        let _ = app.handle_desktop_window_event(id, iced::window::Event::Focused);
+        assert!(app.window_focused);
+        let _ = app.handle_desktop_window_event(id, iced::window::Event::Unfocused);
+        assert!(!app.window_focused);
     }
 
     #[test]
@@ -4029,12 +5457,123 @@ mod tests {
         let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
         let current = iced::window::Id::unique();
         let stale = iced::window::Id::unique();
-        app.record_window_opened(current);
+        let _ = app.request_show();
+        let generation = app.window_state.generation;
+        let _ = app.note_window_opened(generation, current);
 
-        app.record_window_closed(stale);
+        let _ = app.note_window_closed(stale);
 
         assert_eq!(app.main_window_id, Some(current));
         assert!(!app.window_open_pending);
+    }
+
+    #[test]
+    fn reconcile_bumps_revision_once_for_same_effective_set() {
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+
+        app.reconcile_shortcuts_after_commit();
+        assert_eq!(app.desired_revision, 1);
+        app.reconcile_shortcuts_after_commit();
+        assert_eq!(
+            app.desired_revision, 1,
+            "identical snapshots must not bump the revision or storm consent"
+        );
+    }
+
+    #[test]
+    fn reconcile_marks_pending_and_clears_removed_prompts() {
+        let db = Database::in_memory().expect("in-memory database");
+        let id = db
+            .insert(&Prompt {
+                id: String::new(),
+                name: "Pending".to_string(),
+                content: "Content".to_string(),
+                hotkey: Some("Ctrl+Alt+F8".to_string()),
+                hotkey_enabled: true,
+                favorite: false,
+                created_at: String::new(),
+                updated_at: String::new(),
+                last_used_at: None,
+                use_count: 0,
+            })
+            .expect("insert prompt with hotkey");
+        let mut app = JamePromptApp::with_database(db);
+
+        app.reconcile_shortcuts_after_commit();
+        assert_eq!(app.desired_revision, 1);
+        let ack = app.shortcut_states.get(&id).expect("pending state");
+        assert_eq!(ack.status, ShortcutStatus::Pending);
+        assert_eq!(ack.revision, 1);
+
+        // Successful delete removes the state and bumps the revision;
+        // the backend is reconciled only after the commit.
+        let _ = app.update(Message::DeleteConfirmPressed(id.clone()));
+        assert_eq!(app.desired_revision, 2);
+        assert!(
+            !app.shortcut_states.contains_key(&id),
+            "deleted prompts keep no stale shortcut state"
+        );
+    }
+
+    #[test]
+    fn stale_and_unknown_acknowledgements_are_rejected() {
+        let db = Database::in_memory().expect("in-memory database");
+        let id = db
+            .insert(&Prompt {
+                id: String::new(),
+                name: "Acked".to_string(),
+                content: "Content".to_string(),
+                hotkey: Some("Ctrl+Alt+F8".to_string()),
+                hotkey_enabled: true,
+                favorite: false,
+                created_at: String::new(),
+                updated_at: String::new(),
+                last_used_at: None,
+                use_count: 0,
+            })
+            .expect("insert prompt with hotkey");
+        let mut app = JamePromptApp::with_database(db);
+        app.reconcile_shortcuts_after_commit();
+
+        // Stale revision: rejected without mutation.
+        assert!(
+            !app.apply_shortcut_acknowledgement(ShortcutAcknowledgement {
+                revision: 99,
+                prompt_id: id.clone(),
+                runtime_id: Some(7),
+                status: ShortcutStatus::Active,
+                trigger_description: None,
+                error_code: None,
+            })
+        );
+        assert_eq!(app.shortcut_states[&id].status, ShortcutStatus::Pending);
+
+        // Unknown prompt claiming Active: rejected.
+        assert!(
+            !app.apply_shortcut_acknowledgement(ShortcutAcknowledgement {
+                revision: 1,
+                prompt_id: "deleted-prompt".into(),
+                runtime_id: Some(7),
+                status: ShortcutStatus::Active,
+                trigger_description: None,
+                error_code: None,
+            })
+        );
+        assert!(!app.shortcut_states.contains_key("deleted-prompt"));
+
+        // Current revision for a desired prompt: applied.
+        assert!(app.apply_shortcut_acknowledgement(ShortcutAcknowledgement {
+            revision: 1,
+            prompt_id: id.clone(),
+            runtime_id: Some(7),
+            status: ShortcutStatus::Active,
+            trigger_description: Some("CTRL+ALT+F8".into()),
+            error_code: None,
+        }));
+        let ack = &app.shortcut_states[&id];
+        assert_eq!(ack.status, ShortcutStatus::Active);
+        assert_eq!(ack.runtime_id, Some(7));
+        assert_eq!(app.runtime_to_prompt(7), Some(id));
     }
 
     #[test]
@@ -4043,9 +5582,56 @@ mod tests {
 
         assert!(app.smoke_mode);
         assert!(app.smoke_deadline.is_some());
+        #[cfg(target_os = "windows")]
         assert!(app.tray.is_none());
+        assert_eq!(app.tray_state, TrayState::Starting);
         assert!(app.hotkey_service.is_none());
         assert!(app.all_prompts.is_empty());
+    }
+
+    #[test]
+    fn tray_ready_signal_marks_tray_ready() {
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+
+        let _ = app.handle_tray_signal(TraySignal::Ready);
+
+        assert_eq!(app.tray_state, TrayState::Ready);
+    }
+
+    #[test]
+    fn tray_unavailable_while_windowless_requests_fallback() {
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+        assert!(app.should_request_tray_fallback());
+
+        let _ = app.handle_tray_signal(TraySignal::Unavailable(
+            crate::desktop::DesktopErrorCode::TrayHostMissing,
+        ));
+
+        assert_eq!(app.tray_state, TrayState::Unavailable);
+        assert!(app.should_request_tray_fallback());
+    }
+
+    #[test]
+    fn tray_host_offline_with_open_window_requests_no_fallback() {
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+        let id = iced::window::Id::unique();
+        app.main_window_id = Some(id);
+
+        let _ = app.handle_tray_signal(TraySignal::HostOffline);
+
+        assert_eq!(app.tray_state, TrayState::HostOffline);
+        assert!(!app.should_request_tray_fallback());
+    }
+
+    #[test]
+    fn tray_host_online_recovers_to_ready() {
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+        let _ = app.handle_tray_signal(TraySignal::HostOffline);
+        assert_eq!(app.tray_state, TrayState::HostOffline);
+
+        let _ = app.handle_tray_signal(TraySignal::HostOnline);
+
+        assert_eq!(app.tray_state, TrayState::Ready);
     }
 
     #[test]
@@ -4333,5 +5919,204 @@ mod tests {
         assert_eq!(search.notification().message(), MessageKey::SearchCompleted);
         assert_eq!(search.notification().presentation(), Presentation::Status);
         assert_eq!(app.status_message, "0 prompts found");
+    }
+
+    #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+    #[test]
+    fn controller_create_validation_failure_does_not_report_previous_selection_as_success() {
+        use crate::desktop_test_support::{
+            ControllerCommand, ControllerOperation, ControllerResponse, PROTOCOL_VERSION,
+        };
+        use futures_channel::oneshot;
+        use std::sync::{Arc, Mutex};
+
+        let db = Database::in_memory().expect("in-memory database");
+        let existing = db
+            .insert(&Prompt {
+                id: String::new(),
+                name: "Existing".to_string(),
+                content: "Existing content".to_string(),
+                ..Prompt::default()
+            })
+            .expect("existing prompt");
+        let mut app = JamePromptApp::with_database(db);
+        app.selected_id = Some(existing.clone());
+
+        let (reply_tx, mut reply_rx) = oneshot::channel::<ControllerResponse>();
+        let command = ControllerCommand {
+            request_id: 1,
+            operation: ControllerOperation::CreatePrompt {
+                name: String::new(),
+                content: String::new(),
+                hotkey: None,
+                hotkey_enabled: None,
+            },
+            reply: Arc::new(Mutex::new(Some(reply_tx))),
+        };
+        let _ = app.apply_controller_command(command);
+        let response = reply_rx
+            .try_recv()
+            .expect("controller must reply")
+            .expect("reply sender must deliver");
+
+        assert_eq!(response.version, PROTOCOL_VERSION);
+        assert!(!response.ok, "invalid form must not reuse old selection");
+        assert_eq!(
+            response.error.as_ref().map(|error| error.code.as_str()),
+            Some("operation_failed")
+        );
+        assert_eq!(app.selected_id.as_deref(), Some(existing.as_str()));
+    }
+
+    #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+    #[test]
+    fn controller_edit_validation_failure_does_not_report_existing_row_as_success() {
+        use crate::desktop_test_support::{
+            ControllerCommand, ControllerOperation, ControllerResponse, PROTOCOL_VERSION,
+        };
+        use futures_channel::oneshot;
+        use std::sync::{Arc, Mutex};
+
+        let db = Database::in_memory().expect("in-memory database");
+        let id = db
+            .insert(&Prompt {
+                id: String::new(),
+                name: "Existing".to_string(),
+                content: "Existing content".to_string(),
+                ..Prompt::default()
+            })
+            .expect("existing prompt");
+        let mut app = JamePromptApp::with_database(db);
+
+        let (reply_tx, mut reply_rx) = oneshot::channel::<ControllerResponse>();
+        let command = ControllerCommand {
+            request_id: 2,
+            operation: ControllerOperation::EditPrompt {
+                id: id.clone(),
+                name: Some(String::new()),
+                content: None,
+                hotkey: None,
+                hotkey_enabled: None,
+            },
+            reply: Arc::new(Mutex::new(Some(reply_tx))),
+        };
+        let _ = app.apply_controller_command(command);
+        let response = reply_rx
+            .try_recv()
+            .expect("controller must reply")
+            .expect("reply sender must deliver");
+
+        assert_eq!(response.version, PROTOCOL_VERSION);
+        assert!(
+            !response.ok,
+            "invalid edit must not report row existence as success"
+        );
+        assert_eq!(
+            app.prompt_cloned_by_id(&id).expect("row remains").name,
+            "Existing"
+        );
+    }
+
+    #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+    #[test]
+    fn controller_import_unknown_mode_is_rejected() {
+        use crate::desktop_test_support::{
+            ControllerCommand, ControllerOperation, ControllerResponse,
+        };
+        use futures_channel::oneshot;
+        use std::sync::{Arc, Mutex};
+
+        let backup = crate::prompt_backup::PromptBackup::new(
+            "1.2.0-beta.10",
+            vec![Prompt {
+                id: "99999999-9999-4999-8999-999999999999".to_string(),
+                name: "Imported".to_string(),
+                content: "Imported content".to_string(),
+                ..Prompt::default()
+            }],
+        );
+        let backup = serde_json::to_value(backup).expect("backup serializes");
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+        let (reply_tx, mut reply_rx) = oneshot::channel::<ControllerResponse>();
+        let command = ControllerCommand {
+            request_id: 3,
+            operation: ControllerOperation::ImportFixture {
+                backup,
+                mode: Some("unknown".to_string()),
+            },
+            reply: Arc::new(Mutex::new(Some(reply_tx))),
+        };
+        let _ = app.apply_controller_command(command);
+        let response = reply_rx
+            .try_recv()
+            .expect("controller must reply")
+            .expect("reply sender must deliver");
+
+        assert!(!response.ok, "unknown import mode must be rejected");
+        assert!(app.pending_import_backup.is_none());
+    }
+
+    #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+    #[test]
+    fn controller_import_failure_returns_error_and_keeps_revision() {
+        use crate::desktop_test_support::{
+            ControllerCommand, ControllerOperation, ControllerResponse,
+        };
+        use futures_channel::oneshot;
+        use std::sync::{Arc, Mutex};
+
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+        app.desired_revision = 7;
+        let (reply_tx, mut reply_rx) = oneshot::channel::<ControllerResponse>();
+        let command = ControllerCommand {
+            request_id: 4,
+            operation: ControllerOperation::ImportFixture {
+                backup: serde_json::json!({"schema_version": 999}),
+                mode: Some("merge".to_string()),
+            },
+            reply: Arc::new(Mutex::new(Some(reply_tx))),
+        };
+
+        let _ = app.apply_controller_command(command);
+        let response = reply_rx
+            .try_recv()
+            .expect("controller must reply")
+            .expect("reply sender must deliver");
+
+        assert!(!response.ok, "invalid import must report failure");
+        assert!(response.result.is_none());
+        assert_eq!(app.desired_revision, 7);
+        assert!(app.pending_import_backup.is_none());
+    }
+
+    #[cfg(all(target_os = "linux", feature = "desktop-integration-tests"))]
+    #[test]
+    fn controller_dispatch_is_not_terminal_success() {
+        use crate::desktop_test_support::{
+            ControllerCommand, ControllerOperation, ControllerResponse,
+        };
+        use futures_channel::oneshot;
+        use std::sync::{Arc, Mutex};
+
+        let mut app = JamePromptApp::with_database(Database::in_memory().unwrap());
+        let (reply_tx, mut reply_rx) = oneshot::channel::<ControllerResponse>();
+        let command = ControllerCommand {
+            request_id: 5,
+            operation: ControllerOperation::OpenImportDialog {},
+            reply: Arc::new(Mutex::new(Some(reply_tx))),
+        };
+
+        let _ = app.apply_controller_command(command);
+        let response = reply_rx
+            .try_recv()
+            .expect("controller must reply")
+            .expect("reply sender must deliver");
+
+        assert!(response.ok);
+        assert_eq!(
+            response.result,
+            Some(serde_json::json!({"dispatched": true}))
+        );
+        assert!(response.error.is_none());
     }
 }

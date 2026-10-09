@@ -1,6 +1,7 @@
 use global_hotkey::hotkey::HotKey;
 use iced::keyboard::{key::Named, Key, Modifiers};
 
+use crate::desktop::{DesktopRuntime, RuntimeMode};
 use crate::perf;
 use crate::platform::HotkeyBackendKind;
 
@@ -128,59 +129,184 @@ enum HotkeyBackend {
 
 pub struct HotkeyService {
     backend: HotkeyBackend,
+    instance_id: u64,
+    runtime: std::sync::Arc<DesktopRuntime>,
+}
+
+/// Slot registry for backend event streams. Iced may rebuild subscriptions
+/// after window lifecycle changes, so the receiver must outlive each stream
+/// instance instead of being consumed by the first builder.
+struct EventSlot {
+    receiver: std::sync::Arc<
+        std::sync::Mutex<futures_channel::mpsc::UnboundedReceiver<crate::desktop::HotkeyEvent>>,
+    >,
+}
+
+static EVENT_SLOTS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<u64, EventSlot>>,
+> = std::sync::OnceLock::new();
+
+fn event_slots() -> &'static std::sync::Mutex<std::collections::HashMap<u64, EventSlot>> {
+    EVENT_SLOTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
 impl HotkeyService {
-    pub fn new() -> Option<Self> {
+    pub fn new(runtime: std::sync::Arc<DesktopRuntime>) -> Option<Self> {
+        if runtime.mode() == RuntimeMode::Synthetic && !runtime.native_consent_authorized() {
+            return None;
+        }
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let (event_tx, event_rx) = futures_channel::mpsc::unbounded();
         let backend = match crate::platform::hotkey_backend_kind() {
-            HotkeyBackendKind::Native => HotkeyBackend::Native(native::NativeHotkeyService::new()?),
+            HotkeyBackendKind::Native => {
+                HotkeyBackend::Native(native::NativeHotkeyService::new(event_tx)?)
+            }
             #[cfg(target_os = "linux")]
-            HotkeyBackendKind::Portal => HotkeyBackend::Portal(portal::PortalHotkeyService::new()?),
+            HotkeyBackendKind::Portal => HotkeyBackend::Portal(
+                portal::PortalHotkeyService::new_with_event(event_tx, runtime.clone())?,
+            ),
             #[cfg(not(target_os = "linux"))]
             HotkeyBackendKind::Portal => return None,
             HotkeyBackendKind::Unavailable => return None,
         };
-        Some(Self { backend })
-    }
-
-    pub fn register(&self, prompt_id: &str, prompt_name: &str, key_str: &str) -> Option<u32> {
-        perf::measure("hotkeys.register", || match &self.backend {
-            HotkeyBackend::Native(service) => service.register(key_str),
-            #[cfg(target_os = "linux")]
-            HotkeyBackend::Portal(service) => service.register(prompt_id, prompt_name, key_str),
+        let instance_id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // Both backends expose one owned stream through the same slot. The
+        // portal worker publishes asynchronously, but its receiver belongs to
+        // the facade from construction time and must never be discarded.
+        event_slots().lock().ok()?.insert(
+            instance_id,
+            EventSlot {
+                receiver: std::sync::Arc::new(std::sync::Mutex::new(event_rx)),
+            },
+        );
+        Some(Self {
+            backend,
+            instance_id,
+            runtime,
         })
     }
 
-    pub fn unregister(&self, hotkey_id: u32) -> bool {
-        perf::measure("hotkeys.unregister", || match &self.backend {
-            HotkeyBackend::Native(service) => service.unregister(hotkey_id),
-            #[cfg(target_os = "linux")]
-            HotkeyBackend::Portal(service) => service.unregister(hotkey_id),
-        })
-    }
-
-    pub fn poll_event() -> Option<u32> {
-        perf::measure("hotkeys.poll_event", || {
-            if let Some(event) = native::poll_event() {
-                return Some(event);
+    /// Queues one versioned desired snapshot. A queued command is never
+    /// Active: readiness arrives through the subscription as
+    /// [`crate::desktop::HotkeyEvent::Acknowledged`].
+    pub fn reconcile(
+        &self,
+        snapshot: &crate::desktop::ShortcutSnapshot,
+    ) -> Result<crate::desktop::ReconcileReceipt, crate::desktop::DesktopErrorCode> {
+        if self.runtime.mode() == RuntimeMode::Synthetic
+            && !self.runtime.native_consent_authorized()
+        {
+            return Ok(crate::desktop::ReconcileReceipt {
+                rejected_prompt_ids: snapshot
+                    .shortcuts
+                    .iter()
+                    .map(|spec| spec.prompt_id.clone())
+                    .collect(),
+            });
+        }
+        perf::measure("hotkeys.reconcile", || match &self.backend {
+            HotkeyBackend::Native(service) => {
+                service.reconcile(snapshot.revision, &snapshot.shortcuts)
             }
             #[cfg(target_os = "linux")]
-            return portal::poll_event();
-            #[cfg(not(target_os = "linux"))]
-            None
+            HotkeyBackend::Portal(service) => {
+                service.reconcile(snapshot.revision, &snapshot.shortcuts)
+            }
         })
+    }
+
+    pub fn set_parent(
+        &self,
+        parent: Option<crate::desktop::ParentContext>,
+    ) -> Result<(), crate::desktop::DesktopErrorCode> {
+        match &self.backend {
+            HotkeyBackend::Native(service) => service.set_parent(parent),
+            #[cfg(target_os = "linux")]
+            HotkeyBackend::Portal(service) => service.set_parent(parent),
+        }
+    }
+
+    pub fn cancel_interaction(
+        &self,
+        generation: u64,
+    ) -> futures_channel::oneshot::Receiver<crate::desktop::CancelOutcome> {
+        match &self.backend {
+            HotkeyBackend::Native(service) => service.cancel_interaction(generation),
+            #[cfg(target_os = "linux")]
+            HotkeyBackend::Portal(service) => service.cancel_interaction(generation),
+        }
+    }
+
+    pub fn retry_pending(&self) -> Result<(), crate::desktop::DesktopErrorCode> {
+        match &self.backend {
+            HotkeyBackend::Native(service) => service.retry_pending(),
+            #[cfg(target_os = "linux")]
+            HotkeyBackend::Portal(service) => service.retry_pending(),
+        }
+    }
+
+    /// Backend event subscription: acknowledgements, activations and
+    /// backend loss. Native activations stay on the existing polled path
+    /// (X11 smoke contract); portal activations arrive here without
+    /// polling dependence.
+    pub fn subscription(&self) -> iced::Subscription<crate::desktop::HotkeyEvent> {
+        iced::Subscription::run_with(self.instance_id, stream_hotkey_events)
+    }
+
+    pub fn shutdown(&self) -> iced::Task<crate::ui::Message> {
+        let pending = match &self.backend {
+            HotkeyBackend::Native(service) => service.shutdown(),
+            #[cfg(target_os = "linux")]
+            HotkeyBackend::Portal(service) => service.shutdown(),
+        };
+        iced::Task::perform(
+            async move {
+                match pending.await {
+                    Ok(()) => crate::desktop::ShutdownOutcome::Released,
+                    Err(_) => crate::desktop::ShutdownOutcome::Forced(
+                        crate::desktop::DesktopErrorCode::ShutdownTimeout,
+                    ),
+                }
+            },
+            crate::ui::Message::DesktopShutdownFinished,
+        )
+    }
+
+    /// Native polled activation only (X11/Windows). Portal activations
+    /// arrive through [`HotkeyService::subscription`].
+    pub fn poll_native_event() -> Option<u32> {
+        perf::measure("hotkeys.poll_native_event", || native::poll_event())
     }
 }
 
+fn stream_hotkey_events(
+    instance_id: &u64,
+) -> impl futures_util::Stream<Item = crate::desktop::HotkeyEvent> {
+    let receiver = event_slots()
+        .lock()
+        .expect("hotkey event slots")
+        .get_mut(instance_id)
+        .expect("hotkey event slot registered")
+        .receiver
+        .clone();
+    futures_util::stream::poll_fn(move |cx| {
+        let mut receiver = receiver.lock().expect("hotkey event receiver");
+        futures_util::stream::Stream::poll_next(std::pin::Pin::new(&mut *receiver), cx)
+    })
+}
+
 /// Starts automatic paste using the backend selected for the active platform.
-pub fn request_paste(content: String) -> PasteRequest {
+pub fn request_paste(runtime: std::sync::Arc<DesktopRuntime>, content: String) -> PasteRequest {
+    if runtime.mode() == RuntimeMode::Synthetic && !runtime.native_consent_authorized() {
+        return PasteRequest::Unavailable;
+    }
     perf::measure(
         "hotkeys.request_paste",
         || match crate::platform::hotkey_backend_kind() {
             HotkeyBackendKind::Native => PasteRequest::ClipboardRequired(content),
             #[cfg(target_os = "linux")]
             HotkeyBackendKind::Portal => {
-                if remote_desktop::paste_to_active_window(content) {
+                if remote_desktop::paste_to_active_window(runtime, content) {
                     PasteRequest::Started
                 } else {
                     PasteRequest::Busy
@@ -217,14 +343,14 @@ pub fn poll_paste_outcome() -> Option<PasteOutcome> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn prewarm_permission() {
+pub fn prewarm_permission(runtime: std::sync::Arc<DesktopRuntime>) {
     if crate::platform::display_server() == crate::platform::DisplayServer::Wayland {
-        remote_desktop::prewarm_permission();
+        remote_desktop::prewarm_permission(runtime);
     }
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn prewarm_permission() {}
+pub fn prewarm_permission(_runtime: std::sync::Arc<DesktopRuntime>) {}
 
 #[cfg(target_os = "linux")]
 pub fn is_paste_permission_denied() -> bool {
@@ -297,9 +423,71 @@ mod tests {
     }
 
     #[test]
-    fn test_unregister_nonexistent_returns_false_when_service_is_available() {
-        if let Some(service) = HotkeyService::new() {
-            assert!(!service.unregister(99999));
+    fn test_reconcile_rejects_unparseable_trigger_before_backend_contact() {
+        use crate::desktop::{ShortcutSnapshot, ShortcutSpec};
+        if let Some(service) = HotkeyService::new(std::sync::Arc::new(
+            DesktopRuntime::from_parts(
+                crate::desktop::DesktopConfig::default(),
+                "io.github.roymejia2217.JamePrompt.Test",
+                std::path::PathBuf::from("/tmp"),
+                None,
+                RuntimeMode::Production,
+                false,
+            )
+            .expect("test runtime"),
+        )) {
+            let receipt = service
+                .reconcile(&ShortcutSnapshot::new(
+                    1,
+                    vec![ShortcutSpec {
+                        prompt_id: "prompt-bad".to_string(),
+                        description: "Bad".to_string(),
+                        preferred_trigger: "Not A Key".to_string(),
+                    }],
+                ))
+                .expect("reconcile queues");
+            assert_eq!(receipt.rejected_prompt_ids, vec!["prompt-bad".to_string()]);
         }
+    }
+
+    #[test]
+    fn test_empty_snapshot_reconciles_without_rejections() {
+        use crate::desktop::ShortcutSnapshot;
+        if let Some(service) = HotkeyService::new(std::sync::Arc::new(
+            DesktopRuntime::from_parts(
+                crate::desktop::DesktopConfig::default(),
+                "io.github.roymejia2217.JamePrompt.Test",
+                std::path::PathBuf::from("/tmp"),
+                None,
+                RuntimeMode::Production,
+                false,
+            )
+            .expect("test runtime"),
+        )) {
+            let receipt = service
+                .reconcile(&ShortcutSnapshot::new(1, vec![]))
+                .expect("reconcile queues");
+            assert!(receipt.rejected_prompt_ids.is_empty());
+        }
+    }
+
+    #[test]
+    fn unauthorized_synthetic_run_never_requests_consent_or_paste() {
+        let runtime = std::sync::Arc::new(
+            DesktopRuntime::from_parts(
+                crate::desktop::DesktopConfig::default(),
+                "io.github.roymejia2217.JamePrompt.Test",
+                std::path::PathBuf::from("/tmp"),
+                None,
+                RuntimeMode::Synthetic,
+                false,
+            )
+            .expect("test runtime"),
+        );
+
+        assert_eq!(
+            request_paste(runtime, "synthetic content".to_string()),
+            PasteRequest::Unavailable
+        );
     }
 }
