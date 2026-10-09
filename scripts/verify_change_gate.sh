@@ -5,6 +5,8 @@ repository_root="$(git rev-parse --show-toplevel)"
 cd "$repository_root"
 
 run_local_gate() {
+    export UV_PYTHON=/usr/bin/python3
+    export UV_PYTHON_DOWNLOADS=never
     npm run test:commitlint
     python3 scripts/github_api.py --self-test
     python3 scripts/validate_pr_description.py --self-test

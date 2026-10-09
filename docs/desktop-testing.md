@@ -21,6 +21,8 @@ not the historical `pyatspi2` compatibility wrapper.
 Create and use the environment with:
 
 ```sh
+export UV_PYTHON=/usr/bin/python3
+export UV_PYTHON_DOWNLOADS=never
 uv venv --python /usr/bin/python3 --system-site-packages --allow-existing
 uv sync --locked
 uv run --locked pytest tests/desktop -q
@@ -29,6 +31,10 @@ uv run --locked pytest tests/desktop -q
 `--system-site-packages` is intentional: the native bindings come from the
 distribution and must match the active desktop stack. CI installs those system
 packages before creating the environment.
+The explicit interpreter also applies to `uv sync` and `uv run`, overriding
+`.python-version`; a uv-managed interpreter does not provide the distribution's
+compiled GObject bindings. Native CI runs preflight and pytest in this same
+environment and disables automatic interpreter downloads.
 
 ## Runtime Wiring
 

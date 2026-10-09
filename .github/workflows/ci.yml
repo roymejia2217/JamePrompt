@@ -44,6 +44,9 @@ jobs:
   test-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      UV_PYTHON: /usr/bin/python3
+      UV_PYTHON_DOWNLOADS: never
 
     steps:
       - name: Checkout
@@ -197,6 +200,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
+      UV_PYTHON: /usr/bin/python3
+      UV_PYTHON_DOWNLOADS: never
       XDG_CURRENT_DESKTOP: GNOME
       DESKTOP_SESSION: gnome
       XDG_SESSION_TYPE: wayland
@@ -252,7 +257,7 @@ jobs:
           dbus-run-session -- mutter --wayland --no-x11 --sm-disable --headless -- bash -eu -c '
             test -n "${WAYLAND_DISPLAY:-}"
             pgrep -x mutter >/dev/null
-            python3 -c "from tests.desktop.preflight import missing_native_requirements; missing = missing_native_requirements(); assert not missing, missing"
+            uv run --locked python -c "from tests.desktop.preflight import missing_native_requirements; missing = missing_native_requirements(); assert not missing, missing"
             JAME_PROMPT_NATIVE_GNOME=1 \
             JAME_PROMPT_NATIVE_ATSPI_SIGNAL=1 \
             JAME_PROMPT_TEST_BINARY=target/desktop-feature/debug/jame-prompt \
@@ -473,8 +478,8 @@ jobs:
     timeout-minutes: 5
     needs:
       - test-linux
-      - test-native-gnome
       - test-windows
+      - test-native-gnome
       - test_deb
       - test_arch
       - test_rpm

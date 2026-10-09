@@ -200,6 +200,8 @@ The project environment is isolated, while GTK/GObject and AT-SPI bindings remai
 system packages because they bind the active desktop session:
 
 ```sh
+export UV_PYTHON=/usr/bin/python3
+export UV_PYTHON_DOWNLOADS=never
 uv venv --python /usr/bin/python3 --system-site-packages --allow-existing
 uv sync --locked
 uv run --locked pytest tests/desktop -q
