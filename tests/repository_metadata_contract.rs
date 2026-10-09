@@ -356,6 +356,22 @@ fn unreleased_native_autopaste_fix_claim_matches_runtime_contract() {
 }
 
 #[test]
+fn native_hotkey_smoke_shares_one_explicitly_authorized_runtime() {
+    let ui = read_file("src/ui.rs");
+    let smoke = ui
+        .split_once("fn new_native_hotkey_smoke_mode() -> Self {")
+        .expect("native smoke constructor")
+        .1
+        .split("fn queue_startup_shortcuts(")
+        .next()
+        .unwrap();
+    assert!(smoke.contains("let runtime = memory_runtime_with_consent(true);"));
+    assert!(smoke.contains("HotkeyService::new(Arc::clone(&runtime))"));
+    assert!(smoke.lines().any(|line| line.trim() == "runtime,"));
+    assert!(!smoke.contains("runtime: memory_runtime()"));
+}
+
+#[test]
 fn release_metadata_tracks_packaged_linux_x11_runtime_fix_as_fixed() {
     let changelog = read_file("CHANGELOG.md");
     let release = release_block_for(&changelog, "## [1.2.0-beta.10] - 2026-09-23");

@@ -1404,8 +1404,9 @@ impl JamePromptApp {
         };
         let all_prompts = vec![prompt.clone()];
         let prompt_by_id = Self::build_prompt_index(&all_prompts);
+        let runtime = memory_runtime_with_consent(true);
         let hotkey_service = Arc::new(
-            HotkeyService::new(memory_runtime_with_consent(true))
+            HotkeyService::new(Arc::clone(&runtime))
                 .expect("native hotkey smoke backend should initialize"),
         );
         let smoke_specs = vec![crate::desktop::ShortcutSpec {
@@ -1422,7 +1423,7 @@ impl JamePromptApp {
 
         Self {
             db,
-            runtime: memory_runtime(),
+            runtime,
             all_prompts: all_prompts.clone(),
             prompts: all_prompts,
             search_term: String::new(),
