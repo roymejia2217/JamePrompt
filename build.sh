@@ -9,7 +9,6 @@ TARGET_DIR="$ROOT_DIR/target"
 RPM_TOPDIR="$TARGET_DIR/rpmbuild"
 
 FAILED_TARGETS=()
-SKIPPED_TARGETS=()
 
 log() {
     printf '%s\n' "$*"
@@ -22,11 +21,6 @@ command_exists() {
 record_failure() {
     FAILED_TARGETS+=("$1")
     log "FAIL $1: $2"
-}
-
-record_skip() {
-    SKIPPED_TARGETS+=("$1")
-    log "SKIP $1: $2"
 }
 
 run_checked() {
@@ -63,7 +57,7 @@ build_release() {
 build_debian() {
     for tool in python3 dpkg dpkg-deb; do
         if ! command_exists "$tool"; then
-            record_skip "debian" "missing required tool: $tool"
+            record_failure "debian" "missing required tool: $tool"
             return 0
         fi
     done
@@ -78,7 +72,7 @@ build_debian() {
 
 build_arch() {
     if ! command_exists makepkg; then
-        record_skip "arch" "missing required tool: makepkg"
+        record_failure "arch" "missing required tool: makepkg"
         return 0
     fi
 
@@ -106,7 +100,7 @@ prepare_rpm_source() {
 build_rpm() {
     for tool in tar rpmbuild; do
         if ! command_exists "$tool"; then
-            record_skip "rpm" "missing required tool: $tool"
+            record_failure "rpm" "missing required tool: $tool"
             return 0
         fi
     done
@@ -130,7 +124,7 @@ build_rpm() {
     else
         if grep -q "Failed build dependencies:" "$rpm_output"; then
             rm -f "$rpm_output"
-            record_skip "rpm" "missing RPM build dependencies"
+            record_failure "rpm" "missing RPM build dependencies"
             return 0
         fi
 
@@ -143,7 +137,7 @@ build_rpm() {
 build_appimage() {
     for tool in linuxdeploy appimagetool; do
         if ! command_exists "$tool"; then
-            record_skip "appimage" "missing required tool: $tool"
+            record_failure "appimage" "missing required tool: $tool"
             return 0
         fi
     done
@@ -168,10 +162,6 @@ main() {
     build_arch
     build_rpm
     build_appimage
-
-    if [ "${#SKIPPED_TARGETS[@]}" -gt 0 ]; then
-        log "SKIPPED: ${SKIPPED_TARGETS[*]}"
-    fi
 
     if [ "${#FAILED_TARGETS[@]}" -gt 0 ]; then
         log "FAILED: ${FAILED_TARGETS[*]}"

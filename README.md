@@ -176,7 +176,9 @@ Install the pinned repository tooling:
 npm ci
 ```
 
-Run focused metadata/governance harnesses or the complete local change gate:
+Run focused metadata/governance harnesses or the fast local change gate. GitHub
+required checks remain authoritative for full product, native-session, packaging,
+and lifecycle evidence:
 
 ```sh
 npm run test:commitlint
@@ -186,18 +188,47 @@ npm run test:release-gate
 npm run verify:change
 ```
 
-Core Rust checks are:
+The remote CI jobs run the full Rust acceptance matrix. Fast local Rust checks are:
 
 ```sh
 cargo fmt --all -- --check
-cargo test --locked --all-targets
+cargo check --locked --bin jame-prompt
 ```
 
-The packaging orchestrator is available through:
+The Python desktop harness uses the checked-in `pyproject.toml` and `uv.lock`.
+The project environment is isolated, while GTK/GObject and AT-SPI bindings remain
+system packages because they bind the active desktop session:
 
 ```sh
-./build.sh
+export UV_PYTHON=/usr/bin/python3
+export UV_PYTHON_DOWNLOADS=never
+uv venv --python /usr/bin/python3 --system-site-packages --allow-existing
+uv sync --locked
+uv run --locked pytest tests/desktop -q
 ```
+
+Native GNOME tests are an explicit remote CI gate and fail closed when their
+session prerequisites are missing. The native job executes:
+
+```sh
+JAME_PROMPT_NATIVE_GNOME=1 \
+  JAME_PROMPT_NATIVE_ATSPI_SIGNAL=1 \
+  JAME_PROMPT_TEST_BINARY=target/desktop-feature/debug/jame-prompt \
+  uv run --locked pytest -m native_gnome tests/desktop
+```
+
+On Debian or Ubuntu, the native test prerequisites include `python3-gi`,
+`gir1.2-atspi-2.0`, `gir1.2-gtk-3.0`, and `at-spi2-core`. The CI job installs
+these through `apt`; the Python environment does not install system bindings
+through `pip`. Build the feature-enabled binary into `target/desktop-feature`
+before running the native suite. `JAME_PROMPT_NATIVE_ATSPI_SIGNAL=1` is an
+explicit live-session gate that temporarily emits the AccessKit AT-SPI
+activation transition and restores `IsEnabled=true` during cleanup.
+
+Package builds use the explicit canonical entry points documented in
+`packaging/linux/README.md` and executed by the required remote CI jobs. A local
+build command is not evidence that every supported package target was built;
+target-specific tools and package environments are validated remotely.
 
 Required GitHub checks remain the authoritative merge boundary. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for the exact commit, pull-request, release,

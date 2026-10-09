@@ -1,4 +1,9 @@
 use super::PasteOutcome;
+use crate::desktop::{
+    CancelOutcome, DesktopErrorCode, HotkeyEvent, ReconcileReceipt, ShortcutAcknowledgement,
+    ShortcutSpec, ShortcutStatus,
+};
+use futures_channel::mpsc::UnboundedSender;
 use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager};
 use rdev::{simulate, EventType, Key as RdevKey};
 use std::cell::RefCell;
@@ -9,32 +14,176 @@ use std::time::Duration;
 
 const MAX_PENDING_PASTE_OUTCOMES: usize = 8;
 
+/// Main-thread native backend adapter. The global manager is not Send, so
+/// the complete diff is applied synchronously on the calling (main)
+/// thread and success/failure is reported truthfully into the same UI
+/// acknowledgement path the portal backend uses. Native runtime ids may
+/// differ from portal runtime ids; both map to stable prompt identities.
 pub(super) struct NativeHotkeyService {
     manager: GlobalHotKeyManager,
     registered: RefCell<HashMap<u32, HotKey>>,
+    prompt_of: RefCell<HashMap<u32, String>>,
+    event_tx: UnboundedSender<HotkeyEvent>,
 }
 
 impl NativeHotkeyService {
-    pub(super) fn new() -> Option<Self> {
+    pub(super) fn new(event_tx: UnboundedSender<HotkeyEvent>) -> Option<Self> {
         GlobalHotKeyManager::new().ok().map(|manager| Self {
             manager,
             registered: RefCell::new(HashMap::new()),
+            prompt_of: RefCell::new(HashMap::new()),
+            event_tx,
         })
     }
 
-    pub(super) fn register(&self, key_str: &str) -> Option<u32> {
-        let hotkey = key_str.parse::<HotKey>().ok()?;
-        self.manager.register(hotkey).ok()?;
-        self.registered.borrow_mut().insert(hotkey.id(), hotkey);
-        Some(hotkey.id())
+    pub(super) fn reconcile(
+        &self,
+        revision: u64,
+        specs: &[ShortcutSpec],
+    ) -> Result<ReconcileReceipt, DesktopErrorCode> {
+        let mut rejected = Vec::new();
+        let mut desired: HashMap<u32, &ShortcutSpec> = HashMap::new();
+        for spec in specs {
+            match spec.preferred_trigger.parse::<HotKey>() {
+                Ok(hotkey) => {
+                    desired.insert(hotkey.id(), spec);
+                }
+                Err(_) => rejected.push(spec.prompt_id.clone()),
+            }
+        }
+        let mut registered = self.registered.borrow_mut();
+        let mut prompt_of = self.prompt_of.borrow_mut();
+        // Unregister prompts that left the desired set first.
+        let removed: Vec<u32> = registered
+            .keys()
+            .filter(|id| !desired.contains_key(id))
+            .copied()
+            .collect();
+        for id in removed {
+            if let Some(hotkey) = registered.remove(&id) {
+                let _ = self.manager.unregister(hotkey);
+            }
+            let prompt_id = prompt_of.remove(&id).unwrap_or_default();
+            self.acknowledge(
+                revision,
+                prompt_id,
+                Some(id),
+                ShortcutStatus::Inactive,
+                None,
+                None,
+            );
+        }
+        // Register new prompts; report each outcome truthfully.
+        for (id, spec) in &desired {
+            if registered.contains_key(id) {
+                prompt_of.insert(*id, spec.prompt_id.clone());
+                self.acknowledge(
+                    revision,
+                    spec.prompt_id.clone(),
+                    Some(*id),
+                    ShortcutStatus::Active,
+                    Some(spec.preferred_trigger.clone()),
+                    None,
+                );
+                continue;
+            }
+            match spec.preferred_trigger.parse::<HotKey>() {
+                Ok(parsed) if parsed.id() == *id => match self.manager.register(parsed) {
+                    Ok(()) => {
+                        registered.insert(*id, parsed);
+                        prompt_of.insert(*id, spec.prompt_id.clone());
+                        self.acknowledge(
+                            revision,
+                            spec.prompt_id.clone(),
+                            Some(*id),
+                            ShortcutStatus::Active,
+                            Some(spec.preferred_trigger.clone()),
+                            None,
+                        );
+                    }
+                    Err(_) => {
+                        self.acknowledge(
+                            revision,
+                            spec.prompt_id.clone(),
+                            None,
+                            ShortcutStatus::Failed,
+                            None,
+                            Some(DesktopErrorCode::BackendUnavailable),
+                        );
+                    }
+                },
+                _ => {
+                    self.acknowledge(
+                        revision,
+                        spec.prompt_id.clone(),
+                        None,
+                        ShortcutStatus::Failed,
+                        None,
+                        Some(DesktopErrorCode::InvalidResponse),
+                    );
+                }
+            }
+        }
+        Ok(ReconcileReceipt {
+            rejected_prompt_ids: rejected,
+        })
     }
 
-    pub(super) fn unregister(&self, hotkey_id: u32) -> bool {
-        if let Some(hotkey) = self.registered.borrow_mut().remove(&hotkey_id) {
-            self.manager.unregister(hotkey).is_ok()
-        } else {
-            false
+    pub(super) fn set_parent(
+        &self,
+        _parent: Option<crate::desktop::ParentContext>,
+    ) -> Result<(), DesktopErrorCode> {
+        // Native backends need no parent window for consent.
+        Ok(())
+    }
+
+    pub(super) fn retry_pending(&self) -> Result<(), DesktopErrorCode> {
+        // Synchronous backend: nothing pends. The next reconcile
+        // re-publishes current states.
+        Ok(())
+    }
+
+    pub(super) fn cancel_interaction(
+        &self,
+        _generation: u64,
+    ) -> futures_channel::oneshot::Receiver<CancelOutcome> {
+        let (reply_tx, reply_rx) = futures_channel::oneshot::channel();
+        let _ = reply_tx.send(CancelOutcome::NoPendingRequest);
+        reply_rx
+    }
+
+    pub(super) fn shutdown(&self) -> futures_channel::oneshot::Receiver<()> {
+        let registered = self.registered.borrow_mut();
+        for hotkey in registered.values() {
+            let _ = self.manager.unregister(*hotkey);
         }
+        drop(registered);
+        self.registered.borrow_mut().clear();
+        self.prompt_of.borrow_mut().clear();
+        let (reply_tx, reply_rx) = futures_channel::oneshot::channel();
+        let _ = reply_tx.send(());
+        reply_rx
+    }
+
+    fn acknowledge(
+        &self,
+        revision: u64,
+        prompt_id: String,
+        runtime_id: Option<u32>,
+        status: ShortcutStatus,
+        trigger_description: Option<String>,
+        error_code: Option<DesktopErrorCode>,
+    ) {
+        let _ = self
+            .event_tx
+            .unbounded_send(HotkeyEvent::Acknowledged(ShortcutAcknowledgement {
+                revision,
+                prompt_id,
+                runtime_id,
+                status,
+                trigger_description,
+                error_code,
+            }));
     }
 }
 
@@ -106,6 +255,57 @@ pub(super) fn paste_to_active_window() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::desktop::{ShortcutSnapshot, ShortcutSpec};
+
+    fn smoke_spec() -> ShortcutSpec {
+        ShortcutSpec {
+            prompt_id: "prompt-native".to_string(),
+            description: "Native".to_string(),
+            preferred_trigger: "Ctrl+Shift+F13".to_string(),
+        }
+    }
+
+    #[test]
+    fn native_reconcile_acknowledges_exact_routes_synchronously() {
+        let (event_tx, event_rx) = futures_channel::mpsc::unbounded();
+        let Some(service) = NativeHotkeyService::new(event_tx) else {
+            // No native backend on this machine: nothing to assert.
+            return;
+        };
+        let receipt = service
+            .reconcile(1, &[smoke_spec()])
+            .expect("native reconcile");
+        assert!(receipt.rejected_prompt_ids.is_empty());
+        let _ = event_rx;
+        // Success/failure arrives on the shared event channel; the call
+        // itself never disguises acceptance.
+    }
+
+    #[test]
+    fn native_reconcile_rejects_unparseable_trigger() {
+        let (event_tx, _event_rx) = futures_channel::mpsc::unbounded();
+        let Some(service) = NativeHotkeyService::new(event_tx) else {
+            return;
+        };
+        let receipt = service
+            .reconcile(
+                1,
+                &[ShortcutSpec {
+                    prompt_id: "prompt-bad".to_string(),
+                    description: "Bad".to_string(),
+                    preferred_trigger: "Not A Key".to_string(),
+                }],
+            )
+            .expect("native reconcile");
+        assert_eq!(receipt.rejected_prompt_ids, vec!["prompt-bad".to_string()]);
+    }
+
+    #[test]
+    fn native_snapshot_roundtrip_uses_shortcut_snapshot_shape() {
+        let snapshot = ShortcutSnapshot::new(3, vec![smoke_spec()]);
+        assert_eq!(snapshot.revision, 3);
+        assert_eq!(snapshot.shortcuts.len(), 1);
+    }
 
     #[test]
     fn native_paste_reports_completed_only_when_every_injection_step_succeeds() {

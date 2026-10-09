@@ -254,7 +254,7 @@ fn run_build_script(workspace: &Path, mock_path: &Path) -> (bool, String) {
 }
 
 #[test]
-fn build_orchestrator_reports_skipped_targets_and_continues() {
+fn build_orchestrator_fails_when_required_target_is_missing() {
     let log_dir = tempdir().expect("log dir").keep();
     let log = log_dir.join("build.log");
     let mock_path = prepare_mock_path(&log, false, false);
@@ -263,14 +263,10 @@ fn build_orchestrator_reports_skipped_targets_and_continues() {
     let (success, output) = run_build_script(&workspace, &mock_path);
 
     assert!(
-        success,
-        "build.sh should succeed when missing targets are skipped\n{}",
-        output
+        !success,
+        "build.sh should fail when a target is unavailable"
     );
-    assert!(
-        output.contains("SKIP rpm"),
-        "RPM should be skipped without rpmbuild"
-    );
+    assert!(output.contains("FAIL rpm"));
     assert!(output.contains("BUILD debian"));
     assert!(output.contains("BUILD arch"));
     assert!(output.contains("BUILD appimage"));

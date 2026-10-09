@@ -66,6 +66,19 @@ pub fn get_data_dir() -> PathBuf {
     resolve_writable_data_dir(&desired_dir)
 }
 
+/// Returns the canonical configured production data location without
+/// creating directories or migrating files. Synthetic test startup uses this
+/// read-only identity reference before it validates its private root.
+pub fn configured_data_dir() -> PathBuf {
+    ProjectDirs::from("com", NEW_PROJECT_QUALIFIER, APP_NAME)
+        .map(|proj_dirs| proj_dirs.data_local_dir().to_path_buf())
+        .unwrap_or_else(|| {
+            let mut dir = std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir());
+            dir.push("data");
+            dir
+        })
+}
+
 fn migrate_data_dir(old_dir: &Path, new_dir: &Path) {
     if std::fs::create_dir_all(new_dir).is_err() {
         return;
@@ -90,10 +103,12 @@ fn resolve_writable_data_dir(dir: &Path) -> PathBuf {
     fallback
 }
 
+#[cfg(test)]
 pub fn get_db_path() -> PathBuf {
     get_data_dir().join("prompts.db")
 }
 
+#[cfg(test)]
 pub fn get_settings_path() -> PathBuf {
     get_data_dir().join("settings.json")
 }

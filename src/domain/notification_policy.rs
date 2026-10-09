@@ -25,6 +25,10 @@ pub enum NotificationEvent {
     WindowHiddenToTray,
     WindowRestored,
     WindowRestoreFailed,
+    ShortcutAwaitingConsent,
+    ShortcutBindingCancelled,
+    ShortcutBindingUnavailable,
+    ShortcutBindingFailed,
     DestructiveActionRequested,
 }
 
@@ -142,6 +146,38 @@ impl NotificationPolicy {
                 MessageKey::WindowRestoreFailed,
                 NotificationContext::None,
             ),
+            NotificationEvent::ShortcutAwaitingConsent => Notification::new(
+                Severity::Info,
+                Presentation::Status,
+                Persistence::Transient,
+                None,
+                MessageKey::ShortcutAwaitingConsent,
+                NotificationContext::None,
+            ),
+            NotificationEvent::ShortcutBindingCancelled => Notification::new(
+                Severity::Warning,
+                Presentation::MessageBar,
+                Persistence::UntilResolved,
+                Some(NotificationAction::Dismiss),
+                MessageKey::ShortcutBindingCancelled,
+                NotificationContext::None,
+            ),
+            NotificationEvent::ShortcutBindingUnavailable => Notification::new(
+                Severity::Warning,
+                Presentation::MessageBar,
+                Persistence::UntilResolved,
+                Some(NotificationAction::Dismiss),
+                MessageKey::ShortcutBindingUnavailable,
+                NotificationContext::None,
+            ),
+            NotificationEvent::ShortcutBindingFailed => Notification::new(
+                Severity::Error,
+                Presentation::MessageBar,
+                Persistence::UntilResolved,
+                Some(NotificationAction::Dismiss),
+                MessageKey::ShortcutBindingFailed,
+                NotificationContext::None,
+            ),
         }
     }
 
@@ -174,6 +210,32 @@ impl NotificationPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shortcut_readiness_states_have_explicit_policies() {
+        let consent = NotificationPolicy::classify(NotificationEvent::ShortcutAwaitingConsent)
+            .expect("consent outcome has a valid policy");
+        assert_eq!(consent.severity(), Severity::Info);
+        assert_eq!(consent.presentation(), Presentation::Status);
+        assert_eq!(consent.action(), None);
+
+        let cancelled = NotificationPolicy::classify(NotificationEvent::ShortcutBindingCancelled)
+            .expect("cancel outcome has a valid policy");
+        assert_eq!(cancelled.severity(), Severity::Warning);
+        assert_eq!(cancelled.presentation(), Presentation::MessageBar);
+        assert_eq!(cancelled.action(), Some(NotificationAction::Dismiss));
+
+        let unavailable =
+            NotificationPolicy::classify(NotificationEvent::ShortcutBindingUnavailable)
+                .expect("unavailable outcome has a valid policy");
+        assert_eq!(unavailable.severity(), Severity::Warning);
+        assert_eq!(unavailable.action(), Some(NotificationAction::Dismiss));
+
+        let failed = NotificationPolicy::classify(NotificationEvent::ShortcutBindingFailed)
+            .expect("failure outcome has a valid policy");
+        assert_eq!(failed.severity(), Severity::Error);
+        assert_eq!(failed.action(), Some(NotificationAction::Dismiss));
+    }
 
     #[test]
     fn successful_copy_is_transient_status_success() {

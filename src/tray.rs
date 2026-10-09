@@ -1,124 +1,93 @@
-use crate::config::{APP_ID, APP_NAME};
-use crate::perf;
+//! Platform tray facade.
+//!
+//! Linux uses the event-driven StatusNotifierItem service
+//! ([`linux`], ksni + DBusMenu callbacks, no GTK pumping). Windows keeps
+//! the existing tray-icon polling path ([`windows`]). Every tray callback
+//! reaches the same canonical application routes via [`TraySignal`].
 
-use tray_icon::{
-    menu::{Menu, MenuId, MenuItem, PredefinedMenuItem},
-    MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent, TrayIconId,
-};
+#![cfg_attr(
+    all(target_os = "linux", feature = "desktop-integration-tests"),
+    allow(dead_code)
+)]
 
+#[cfg(target_os = "linux")]
+pub mod linux;
+#[cfg(target_os = "windows")]
+pub mod windows;
+
+#[cfg(target_os = "windows")]
+pub use windows::{TrayEvent, TrayHandle};
+
+use crate::desktop::{DesktopErrorCode, DesktopRuntime};
+use std::sync::Arc;
+
+/// Typed tray event delivered to the iced subscription.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TrayEvent {
+pub enum TraySignal {
     ShowRequested,
     QuitRequested,
+    /// Service registered with the SNI watcher and ready.
+    Ready,
+    /// No usable tray host or service spawn failure.
+    Unavailable(DesktopErrorCode),
+    /// Watcher went offline after being available.
+    HostOffline,
+    /// Watcher came back online.
+    HostOnline,
 }
 
-pub struct TrayHandle {
-    _icon: TrayIcon,
-    tray_id: TrayIconId,
-    show_id: MenuId,
-    quit_id: MenuId,
+/// Availability from the application's perspective.
+///
+/// `Ready` requires a registered host/service, never the mere presence of
+/// a handle. `Starting` is not ready: hidden startup waits for `Ready` or
+/// the bounded initial failure before choosing the fallback window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TrayState {
+    #[default]
+    Starting,
+    Ready,
+    Unavailable,
+    HostOffline,
 }
 
-impl TrayHandle {
-    #[cfg_attr(test, allow(dead_code))]
-    pub fn new() -> Result<Self, String> {
-        perf::measure("tray.new", || {
-            let ids = TrayIds::new();
-            let menu = build_menu(&ids)?;
-            let icon = tray_icon::Icon::from_rgba(
-                crate::APP_TRAY_ICON.data.to_vec(),
-                crate::APP_TRAY_ICON.width,
-                crate::APP_TRAY_ICON.height,
-            )
-            .map_err(|err| format!("invalid tray icon data: {err}"))?;
-
-            let tray = TrayIconBuilder::new()
-                .with_id(ids.tray_id.clone())
-                .with_menu(Box::new(menu))
-                .with_tooltip(APP_NAME)
-                .with_icon(icon)
-                .build()
-                .map_err(|err| format!("could not create system tray icon: {err}"))?;
-
-            Ok(Self {
-                _icon: tray,
-                tray_id: ids.tray_id,
-                show_id: ids.show_id,
-                quit_id: ids.quit_id,
-            })
-        })
+/// Persistent tray subscription. The `instance` id gives the subscription a
+/// stable identity across window open/close cycles: the service is created
+/// once and cancelled only on shutdown, never rebuilt per status change.
+pub fn subscription(instance: u64, runtime: Arc<DesktopRuntime>) -> iced::Subscription<TraySignal> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::subscription(instance, runtime)
     }
-
-    pub fn poll_event(&self) -> Option<TrayEvent> {
-        perf::measure("tray.poll_event", || {
-            while let Ok(event) = tray_icon::menu::MenuEvent::receiver().try_recv() {
-                if event.id == self.show_id {
-                    return Some(TrayEvent::ShowRequested);
-                }
-
-                if event.id == self.quit_id {
-                    return Some(TrayEvent::QuitRequested);
-                }
-            }
-
-            while let Ok(event) = TrayIconEvent::receiver().try_recv() {
-                match event {
-                    TrayIconEvent::Click {
-                        id,
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    }
-                    | TrayIconEvent::DoubleClick {
-                        id,
-                        button: MouseButton::Left,
-                        ..
-                    } if id == self.tray_id => return Some(TrayEvent::ShowRequested),
-                    _ => {}
-                }
-            }
-
-            None
-        })
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (instance, runtime);
+        iced::Subscription::none()
     }
 }
 
+/// Legacy platform event pumping hook. The Linux tray-icon path (and its
+/// GTK pumping) is removed: the ksni service has no GTK loop integration
+/// and rfd owns its separate GTK thread. Retained for the unchanged
+/// Windows polling path only.
+#[cfg(target_os = "windows")]
 pub fn pump_platform_events() {
-    perf::measure("tray.pump_platform_events", || {
-        #[cfg(target_os = "linux")]
-        while gtk::events_pending() {
-            gtk::main_iteration_do(false);
-        }
-    });
+    // Windows tray-icon path requires no extra pumping.
 }
 
-#[cfg_attr(test, allow(dead_code))]
-struct TrayIds {
-    tray_id: TrayIconId,
-    show_id: MenuId,
-    quit_id: MenuId,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl TrayIds {
-    #[cfg_attr(test, allow(dead_code))]
-    fn new() -> Self {
-        Self {
-            tray_id: TrayIconId::new(format!("{APP_ID}.tray")),
-            show_id: MenuId::new(format!("{APP_ID}.show")),
-            quit_id: MenuId::new(format!("{APP_ID}.quit")),
-        }
+    #[test]
+    fn only_ready_counts_as_available() {
+        assert!(!matches!(TrayState::Starting, TrayState::Ready));
+        assert!(!matches!(TrayState::Unavailable, TrayState::Ready));
+        assert!(!matches!(TrayState::HostOffline, TrayState::Ready));
+        assert!(matches!(TrayState::Ready, TrayState::Ready));
     }
-}
 
-#[cfg_attr(test, allow(dead_code))]
-fn build_menu(ids: &TrayIds) -> Result<Menu, String> {
-    let show = MenuItem::with_id(ids.show_id.clone(), format!("Show {APP_NAME}"), true, None);
-    let separator = PredefinedMenuItem::separator();
-    let quit = MenuItem::with_id(ids.quit_id.clone(), "Quit", true, None);
-    let menu = Menu::new();
-
-    menu.append_items(&[&show, &separator, &quit])
-        .map_err(|err| format!("could not create tray menu: {err}"))?;
-
-    Ok(menu)
+    #[test]
+    fn default_tray_state_is_starting() {
+        assert_eq!(TrayState::default(), TrayState::Starting);
+    }
 }

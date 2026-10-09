@@ -117,6 +117,7 @@ CI_AGGREGATE_NEEDS = {
     "test_deb",
     "test_arch",
     "test_rpm",
+    "test-native-gnome",
 }
 RELEASE_REQUIRED_NEEDS = {
     "release-gate",
@@ -129,6 +130,23 @@ RELEASE_REQUIRED_NEEDS = {
 UNSAFE_RELEASE_REF_CHECKOUT = "ref: ${{ env.RELEASE_REF }}"
 WINDOWS_RUST_TOOLCHAIN = "1.98.1"
 WINDOWS_RUST_TOOLCHAIN_ACTION = "dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87"
+NATIVE_GNOME_CI_JOB = "test-native-gnome"
+NATIVE_GNOME_STEP_ORDER = (
+    "Install native GNOME test dependencies",
+    "Sync native GNOME test environment",
+    "Build native GNOME test binary",
+    "Run native GNOME tests in headless Mutter",
+)
+NATIVE_GNOME_TOKENS = (
+    "mutter --wayland --no-x11 --sm-disable --headless",
+    "pgrep -x mutter",
+    "missing_native_requirements",
+    "uv run --locked python -c",
+    "JAME_PROMPT_NATIVE_GNOME=1",
+    "JAME_PROMPT_NATIVE_ATSPI_SIGNAL=1",
+    "JAME_PROMPT_TEST_BINARY=target/desktop-feature/debug/jame-prompt",
+    "pytest -m native_gnome",
+)
 
 
 def load_workflow(path: Path) -> dict[str, Any]:
@@ -320,6 +338,27 @@ def validate_parity(ci: dict[str, Any], release: dict[str, Any]) -> None:
             f"Release/{platform}",
         )
 
+    native_job = get_job(ci, NATIVE_GNOME_CI_JOB, "CI/native-gnome")
+    require_tokens(
+        job_text(native_job),
+        NATIVE_GNOME_TOKENS,
+        "CI/native-gnome",
+    )
+    require_order(
+        step_names(native_job, "CI/native-gnome"),
+        NATIVE_GNOME_STEP_ORDER,
+        "CI/native-gnome",
+    )
+    for job_name in ("test-linux", NATIVE_GNOME_CI_JOB):
+        job = get_job(ci, job_name, f"CI/{job_name}")
+        environment = job.get("env", {})
+        for key, expected in (
+            ("UV_PYTHON", "/usr/bin/python3"),
+            ("UV_PYTHON_DOWNLOADS", "never"),
+        ):
+            if not isinstance(environment, dict) or environment.get(key) != expected:
+                raise ParityError(f"CI/{job_name}: {key} must be {expected}")
+
     release_gate_job = get_job(release, "release-gate", "Release/release-gate")
     release_gate_checkout = step_by_name(
         release_gate_job,
@@ -478,7 +517,7 @@ def fixture_workflows() -> tuple[dict[str, Any], dict[str, Any]]:
     release_jobs: dict[str, Any] = {}
 
     for contract in PARITY_CONTRACTS.values():
-        ci_steps = [
+        ci_steps: list[dict[str, Any]] = [
             {
                 "name": "Parity fixture",
                 "run": "\n".join(contract.shared_tokens),
@@ -538,6 +577,40 @@ def fixture_workflows() -> tuple[dict[str, Any], dict[str, Any]]:
             )
         release_jobs[contract.release_job] = {"steps": release_steps}
 
+    ci_jobs[NATIVE_GNOME_CI_JOB] = {
+        "steps": [
+            {
+                "name": "Install native GNOME test dependencies",
+                "run": "sudo apt-get install mutter dbus-x11 gir1.2-atspi-2.0",
+            },
+            {
+                "name": "Sync native GNOME test environment",
+                "run": "uv sync --locked",
+            },
+            {
+                "name": "Build native GNOME test binary",
+                "run": "cargo build --locked --features desktop-integration-tests --bin jame-prompt --target-dir target/desktop-feature",
+            },
+            {
+                "name": "Run native GNOME tests in headless Mutter",
+                "run": (
+                    "mutter --wayland --no-x11 --sm-disable --headless -- bash -eu -c "
+                    "'pgrep -x mutter >/dev/null; "
+                    "uv run --locked python -c \"from tests.desktop.preflight import missing_native_requirements; "
+                    "assert not missing_native_requirements()\"; "
+                    "JAME_PROMPT_NATIVE_GNOME=1 "
+                    "JAME_PROMPT_NATIVE_ATSPI_SIGNAL=1 "
+                    "JAME_PROMPT_TEST_BINARY=target/desktop-feature/debug/jame-prompt "
+                    "uv run --locked pytest -m native_gnome tests/desktop'"
+                ),
+            },
+        ]
+    }
+    for job_name in ("test-linux", NATIVE_GNOME_CI_JOB):
+        ci_jobs[job_name]["env"] = {
+            "UV_PYTHON": "/usr/bin/python3",
+            "UV_PYTHON_DOWNLOADS": "never",
+        }
     ci_jobs["test"] = {"needs": sorted(CI_AGGREGATE_NEEDS), "steps": []}
     release_jobs["release-gate"] = {
         "steps": [
@@ -628,6 +701,62 @@ def fixture_workflows() -> tuple[dict[str, Any], dict[str, Any]]:
 def run_self_test() -> None:
     ci, release = fixture_workflows()
     validate_parity(ci, release)
+
+    for job_name in ("test-linux", NATIVE_GNOME_CI_JOB):
+        for key, incorrect_value in (
+            ("UV_PYTHON", "3.14"),
+            ("UV_PYTHON_DOWNLOADS", "automatic"),
+        ):
+            broken_ci, broken_release = fixture_workflows()
+            broken_ci["jobs"][job_name]["env"][key] = incorrect_value
+            try:
+                validate_parity(broken_ci, broken_release)
+            except ParityError as error:
+                if key not in str(error):
+                    raise AssertionError("interpreter drift was not attributed correctly") from error
+            else:
+                raise AssertionError(f"{job_name}: interpreter drift in {key} must fail")
+
+    broken_ci, broken_release = fixture_workflows()
+    native_step = step_by_name(
+        broken_ci["jobs"][NATIVE_GNOME_CI_JOB],
+        "Run native GNOME tests in headless Mutter",
+        "CI/native-gnome",
+    )
+    native_step["run"] = native_step["run"].replace("uv run --locked python -c", "python3 -c")
+    try:
+        validate_parity(broken_ci, broken_release)
+    except ParityError as error:
+        if "uv run --locked python -c" not in str(error):
+            raise AssertionError("preflight interpreter mismatch was not attributed correctly") from error
+    else:
+        raise AssertionError("native preflight must use the same environment as pytest")
+
+    broken_ci, broken_release = fixture_workflows()
+    broken_ci["jobs"].pop(NATIVE_GNOME_CI_JOB)
+    try:
+        validate_parity(broken_ci, broken_release)
+    except ParityError as error:
+        if "test-native-gnome" not in str(error):
+            raise AssertionError(
+                "missing native GNOME job was not attributed correctly"
+            ) from error
+    else:
+        raise AssertionError("missing native GNOME job must fail parity validation")
+
+    broken_ci, broken_release = fixture_workflows()
+    broken_ci["jobs"]["test"]["needs"].remove(NATIVE_GNOME_CI_JOB)
+    try:
+        validate_parity(broken_ci, broken_release)
+    except ParityError as error:
+        if "aggregate gate is missing required jobs" not in str(error):
+            raise AssertionError(
+                "missing native aggregate dependency was not attributed correctly"
+            ) from error
+    else:
+        raise AssertionError(
+            "missing native aggregate dependency must fail parity validation"
+        )
 
     broken_ci, broken_release = fixture_workflows()
     ci_windows_toolchain = step_by_name(

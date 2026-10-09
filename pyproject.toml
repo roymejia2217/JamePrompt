@@ -1,0 +1,23 @@
+[project]
+name = "jameprompt-desktop-tests"
+version = "0.1.0"
+description = "Deterministic and native GNOME desktop integration tests for JamePrompt"
+requires-python = ">=3.12,<3.15"
+dependencies = []
+
+[dependency-groups]
+test = [
+    "pytest==9.0.2",
+]
+
+[tool.uv]
+default-groups = ["test"]
+package = false
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+addopts = ["-ra", "--strict-markers"]
+testpaths = ["tests/desktop"]
+markers = [
+    "native_gnome: requires an active GNOME Wayland session and native AT-SPI/D-Bus services",
+]

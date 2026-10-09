@@ -1,6 +1,6 @@
 use super::clipboard_transfer;
 use super::PasteOutcome;
-use crate::config::{get_data_dir, LINUX_DESKTOP_APP_ID};
+use crate::desktop::DesktopRuntime;
 use gtk::glib::variant::{ObjectPath, ToVariant};
 use gtk::{gio, glib};
 use serde::{Deserialize, Serialize};
@@ -169,15 +169,16 @@ struct PortalPermissionState {
 struct RemoteDesktopState {
     session: Option<String>,
     restore_token: Option<String>,
+    permission_path: std::path::PathBuf,
     retry_after: Option<Instant>,
 }
 
 impl RemoteDesktopState {
-    fn load() -> Self {
+    fn load(permission_path: std::path::PathBuf) -> Self {
         Self {
             session: None,
-            restore_token: load_permission_state(&permission_state_path())
-                .remote_desktop_restore_token,
+            restore_token: load_permission_state(&permission_path).remote_desktop_restore_token,
+            permission_path,
             retry_after: None,
         }
     }
@@ -201,7 +202,9 @@ impl RemoteDesktopState {
                 create_remote_desktop_session(context, connection, self.restore_token.as_deref())?;
             self.session = Some(session);
             self.restore_token = restore_token;
-            if let Err(error) = save_restore_token(self.restore_token.as_deref()) {
+            if let Err(error) =
+                save_restore_token(&self.permission_path, self.restore_token.as_deref())
+            {
                 tracing::warn!("Unable to persist Wayland keyboard permission: {error}");
             }
             self.retry_after = None;
@@ -219,7 +222,7 @@ impl RemoteDesktopState {
     }
 }
 
-fn send_command(command: WorkerCommand) -> bool {
+fn send_command(runtime: Arc<DesktopRuntime>, command: WorkerCommand) -> bool {
     let slot = worker_slot();
     let mut sender_guard = match slot.lock() {
         Ok(guard) => guard,
@@ -234,7 +237,7 @@ fn send_command(command: WorkerCommand) -> bool {
         *sender_guard = None;
     }
 
-    match start_worker() {
+    match start_worker(runtime) {
         Some(sender) => {
             if let Err(error) = sender.send(command) {
                 set_permission_denied(true);
@@ -254,15 +257,18 @@ fn send_command(command: WorkerCommand) -> bool {
     }
 }
 
-pub fn prewarm_permission() {
-    let _ = send_command(WorkerCommand::Prewarm);
+pub fn prewarm_permission(runtime: Arc<DesktopRuntime>) {
+    let _ = send_command(runtime, WorkerCommand::Prewarm);
 }
 
-pub(super) fn paste_to_active_window(content: String) -> bool {
+pub(super) fn paste_to_active_window(runtime: Arc<DesktopRuntime>, content: String) -> bool {
     if !try_begin_paste() {
         return false;
     }
-    if send_command(WorkerCommand::Paste(Arc::from(content.into_bytes()))) {
+    if send_command(
+        runtime,
+        WorkerCommand::Paste(Arc::from(content.into_bytes())),
+    ) {
         true
     } else {
         finish_paste();
@@ -270,26 +276,28 @@ pub(super) fn paste_to_active_window(content: String) -> bool {
     }
 }
 
-fn start_worker() -> Option<mpsc::Sender<WorkerCommand>> {
+fn start_worker(runtime: Arc<DesktopRuntime>) -> Option<mpsc::Sender<WorkerCommand>> {
     let (tx, rx) = mpsc::channel();
     thread::Builder::new()
         .name("jameprompt-wayland-paste".into())
-        .spawn(move || remote_desktop_worker(rx))
+        .spawn(move || remote_desktop_worker(rx, runtime))
         .ok()?;
     Some(tx)
 }
 
-fn remote_desktop_worker(rx: mpsc::Receiver<WorkerCommand>) {
+fn remote_desktop_worker(rx: mpsc::Receiver<WorkerCommand>, runtime: Arc<DesktopRuntime>) {
     let context = glib::MainContext::new();
     let result = context.with_thread_default(|| {
         let connection = super::connection::session_connection()?;
-        register_host_application(&connection)?;
+        register_host_application(&connection, runtime.app_id())?;
         ensure_remote_desktop_available(&connection)?;
         let offer = Rc::new(RefCell::new(None::<ClipboardOffer>));
         let (offer_timeout_tx, offer_timeout_rx) = mpsc::channel::<(String, u64)>();
         let _selection_transfer = subscribe_selection_transfer(&connection, Rc::clone(&offer));
 
-        let mut state = RemoteDesktopState::load();
+        let mut state = RemoteDesktopState::load(
+            runtime.data_root().join(PERMISSION_STATE_FILE),
+        );
         let mut next_offer_generation = 1u64;
         loop {
             while context.pending() {
@@ -420,9 +428,8 @@ fn remote_desktop_worker(rx: mpsc::Receiver<WorkerCommand>) {
     }
 }
 
-fn register_host_application(connection: &gio::DBusConnection) -> Result<(), String> {
-    let parameters =
-        glib::Variant::tuple_from_iter([LINUX_DESKTOP_APP_ID.to_variant(), empty_options()]);
+fn register_host_application(connection: &gio::DBusConnection, app_id: &str) -> Result<(), String> {
+    let parameters = glib::Variant::tuple_from_iter([app_id.to_variant(), empty_options()]);
 
     match connection.call_sync(
         Some(PORTAL_BUS),
@@ -933,10 +940,6 @@ fn portal_token(prefix: &str) -> String {
     format!("{prefix}_{}", Uuid::new_v4().simple())
 }
 
-fn permission_state_path() -> std::path::PathBuf {
-    get_data_dir().join(PERMISSION_STATE_FILE)
-}
-
 fn load_permission_state(path: &Path) -> PortalPermissionState {
     fs::read_to_string(path)
         .ok()
@@ -944,8 +947,7 @@ fn load_permission_state(path: &Path) -> PortalPermissionState {
         .unwrap_or_default()
 }
 
-fn save_restore_token(restore_token: Option<&str>) -> Result<(), String> {
-    let path = permission_state_path();
+fn save_restore_token(path: &Path, restore_token: Option<&str>) -> Result<(), String> {
     let state = PortalPermissionState {
         remote_desktop_restore_token: restore_token.map(str::to_owned),
     };

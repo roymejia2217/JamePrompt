@@ -44,6 +44,9 @@ jobs:
   test-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      UV_PYTHON: /usr/bin/python3
+      UV_PYTHON_DOWNLOADS: never
 
     steps:
       - name: Checkout
@@ -65,11 +68,28 @@ jobs:
             libxdo-dev \
             python3-pil \
             python3-yaml \
+            python3-gi \
+            gir1.2-atspi-2.0 \
+            gir1.2-gtk-3.0 \
+            at-spi2-core \
             desktop-file-utils \
             xvfb \
             xauth \
             xdotool \
             zenity
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4
+        with:
+          version: 0.11.32
+
+      - name: Sync Python desktop test environment
+        run: |
+          uv venv --python /usr/bin/python3 --system-site-packages
+          uv sync --locked
+
+      - name: Run Python desktop harness contract tests
+        run: uv run --locked pytest tests/desktop -q
 
       - name: Validate workflow YAML validator
         run: python3 scripts/validate_workflow_yaml.py --self-test
@@ -145,6 +165,9 @@ jobs:
       - name: Run Linux tests
         run: cargo test --locked --all-targets
 
+      - name: Run deterministic desktop integration tests
+        run: cargo test --locked --all-targets --features desktop-integration-tests
+
       - name: Build native hotkey smoke binary
         run: cargo build --locked --bin jame-prompt
 
@@ -172,6 +195,74 @@ jobs:
             exit 1
           fi
           xvfb-run -a -s "-screen 0 1280x800x24" bash scripts/smoke/native-hotkey-x11.sh "$APPIMAGE"
+
+  test-native-gnome:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      UV_PYTHON: /usr/bin/python3
+      UV_PYTHON_DOWNLOADS: never
+      XDG_CURRENT_DESKTOP: GNOME
+      DESKTOP_SESSION: gnome
+      XDG_SESSION_TYPE: wayland
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install native GNOME test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            dbus-daemon \
+            dbus-x11 \
+            mutter \
+            pkg-config \
+            libx11-dev \
+            libxtst-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-0 \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            libxdo-dev \
+            python3-pil \
+            python3-yaml \
+            python3-gi \
+            gir1.2-atspi-2.0 \
+            gir1.2-gtk-3.0 \
+            at-spi2-core \
+            desktop-file-utils
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4
+        with:
+          version: 0.11.32
+
+      - name: Sync native GNOME test environment
+        run: |
+          uv venv --python /usr/bin/python3 --system-site-packages
+          uv sync --locked
+
+      - name: Build native GNOME test binary
+        run: cargo build --locked --features desktop-integration-tests --bin jame-prompt --target-dir target/desktop-feature
+
+      - name: Run native GNOME tests in headless Mutter
+        run: |
+          set -euo pipefail
+          runtime_dir="$RUNNER_TEMP/jameprompt-runtime"
+          install -d -m 700 "$runtime_dir"
+          export XDG_RUNTIME_DIR="$runtime_dir"
+          dbus-run-session -- mutter --wayland --no-x11 --sm-disable --headless -- bash -eu -c '
+            test -n "${WAYLAND_DISPLAY:-}"
+            pgrep -x mutter >/dev/null
+            uv run --locked python -c "from tests.desktop.preflight import missing_native_requirements; missing = missing_native_requirements(); assert not missing, missing"
+            JAME_PROMPT_NATIVE_GNOME=1 \
+            JAME_PROMPT_NATIVE_ATSPI_SIGNAL=1 \
+            JAME_PROMPT_TEST_BINARY=target/desktop-feature/debug/jame-prompt \
+              uv run --locked pytest -m native_gnome tests/desktop -q
+          '
 
   test-windows:
     runs-on: windows-latest
@@ -259,7 +350,11 @@ jobs:
             lintian
 
       - name: Build Debian package
-        run: packaging/linux/build-deb.sh
+        run: |
+          icon_state_before="$(git status --porcelain -- assets/icons)"
+          packaging/linux/build-deb.sh
+          icon_state_after="$(git status --porcelain -- assets/icons)"
+          test "$icon_state_after" = "$icon_state_before"
 
       - name: Verify Debian package artifact
         run: |
@@ -384,20 +479,23 @@ jobs:
     needs:
       - test-linux
       - test-windows
+      - test-native-gnome
       - test_deb
       - test_arch
       - test_rpm
 
     steps:
-      - name: Require Linux, Windows, Debian, Arch, and RPM test jobs
+      - name: Require Linux, native GNOME, Windows, Debian, Arch, and RPM test jobs
         env:
           LINUX_RESULT: ${{ needs.test-linux.result }}
+          NATIVE_GNOME_RESULT: ${{ needs.test-native-gnome.result }}
           WINDOWS_RESULT: ${{ needs.test-windows.result }}
           DEB_RESULT: ${{ needs.test_deb.result }}
           ARCH_RESULT: ${{ needs.test_arch.result }}
           RPM_RESULT: ${{ needs.test_rpm.result }}
         run: |
           test "$LINUX_RESULT" = "success"
+          test "$NATIVE_GNOME_RESULT" = "success"
           test "$WINDOWS_RESULT" = "success"
           test "$DEB_RESULT" = "success"
           test "$ARCH_RESULT" = "success"

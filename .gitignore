@@ -1,8 +1,10 @@
 /target/
 /node_modules/
+.venv/
 /dist/
 .agents/
 .codex/
+.opencode/
 .AppImage
 *.AppImage
 *.deb
@@ -25,3 +27,5 @@ Desktop.ini
 .vscode/
 *.iml
 .cache/
+__pycache__/
+*.pyc
