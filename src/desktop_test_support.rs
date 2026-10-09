@@ -84,18 +84,7 @@ fn is_reverse_dns(app_id: &str) -> bool {
 }
 
 fn canonicalize_for_validation(path: &Path) -> Result<PathBuf, String> {
-    if path.exists() {
-        return std::fs::canonicalize(path).map_err(|error| error.to_string());
-    }
-    let parent = path
-        .parent()
-        .ok_or_else(|| "path has no existing parent".to_string())?;
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| "path has no final component".to_string())?;
-    Ok(std::fs::canonicalize(parent)
-        .map_err(|error| error.to_string())?
-        .join(file_name))
+    crate::desktop::canonicalize_for_runtime(path).map_err(|error| error.to_string())
 }
 
 fn validate_private_run_path(
@@ -857,6 +846,55 @@ mod tests {
         let profile = SyntheticProfile::load(&path, &production_dir()).expect("valid profile");
         assert!(!profile.native_consent_authorized);
         assert_eq!(profile.fixture_seed, "seed");
+    }
+
+    #[test]
+    fn synthetic_startup_does_not_require_existing_production_ancestors() {
+        let dir = tempfile::tempdir().expect("private run root");
+        let data_dir = dir.path().join("data");
+        std::fs::create_dir(&data_dir).expect("synthetic data directory");
+        let production = dir.path().join("absent-home/.local/share/JamePrompt");
+        let path = write_profile(
+            dir.path(),
+            &serde_json::json!({
+                "test_app_id": "io.github.roymejia2217.JamePrompt.Test",
+                "data_dir": data_dir,
+            })
+            .to_string(),
+        );
+        let profile = SyntheticProfile::load(&path, &production)
+            .expect("a fresh home must not prevent synthetic startup");
+        let runtime = crate::desktop::DesktopRuntime::synthetic(
+            profile,
+            &production,
+            crate::desktop::DesktopConfig::default(),
+        )
+        .expect("synthetic runtime must remain independent of production files");
+        assert_eq!(
+            runtime.data_root(),
+            std::fs::canonicalize(data_dir).unwrap()
+        );
+        assert!(!dir.path().join("absent-home").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn profile_rejects_missing_descendant_through_external_symlink() {
+        let dir = tempfile::tempdir().expect("private run root");
+        let outside = tempfile::tempdir().expect("external directory");
+        let alias = dir.path().join("external-alias");
+        std::os::unix::fs::symlink(outside.path(), &alias).unwrap();
+        let path = write_profile(
+            dir.path(),
+            &serde_json::json!({
+                "test_app_id": "io.github.roymejia2217.JamePrompt.Test",
+                "data_dir": alias.join("missing/data"),
+            })
+            .to_string(),
+        );
+        let error = SyntheticProfile::load(&path, &production_dir()).expect_err("root escape");
+        assert!(error.reason.contains("private run root"), "{error}");
+        assert!(!outside.path().join("missing").exists());
     }
 
     #[test]

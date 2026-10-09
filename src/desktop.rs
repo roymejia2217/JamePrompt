@@ -348,27 +348,41 @@ impl DesktopRuntime {
     }
 }
 
-fn canonicalize_for_runtime(path: &std::path::Path) -> Result<std::path::PathBuf, ConfigError> {
-    if path.exists() {
-        return std::fs::canonicalize(path).map_err(|error| ConfigError {
-            variable: "JAME_PROMPT_DESKTOP_DATA_DIR",
-            reason: format!("cannot resolve {}: {error}", path.display()),
-        });
+/// Resolves existing ancestors and missing descendants without creating files.
+/// Inspect symlinks themselves so dangling aliases fail rather than look absent.
+pub(crate) fn canonicalize_for_runtime(
+    path: &std::path::Path,
+) -> Result<std::path::PathBuf, ConfigError> {
+    let invalid_path = |reason: String| ConfigError {
+        variable: "JAME_PROMPT_DESKTOP_DATA_DIR",
+        reason: format!("cannot resolve {}: {reason}", path.display()),
+    };
+    let mut ancestor = path;
+    let mut missing = Vec::new();
+    loop {
+        match std::fs::symlink_metadata(ancestor) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let name = ancestor.file_name().ok_or_else(|| {
+                    invalid_path("missing path must have a normal final component".into())
+                })?;
+                missing.push(name);
+                ancestor = ancestor
+                    .parent()
+                    .ok_or_else(|| invalid_path("missing path has no existing ancestor".into()))?;
+            }
+            Err(error) => return Err(invalid_path(error.to_string())),
+        }
     }
-    let parent = path.parent().ok_or_else(|| ConfigError {
-        variable: "JAME_PROMPT_DESKTOP_DATA_DIR",
-        reason: format!("{} has no parent", path.display()),
-    })?;
-    let file_name = path.file_name().ok_or_else(|| ConfigError {
-        variable: "JAME_PROMPT_DESKTOP_DATA_DIR",
-        reason: format!("{} has no final component", path.display()),
-    })?;
-    Ok(std::fs::canonicalize(parent)
-        .map_err(|error| ConfigError {
-            variable: "JAME_PROMPT_DESKTOP_DATA_DIR",
-            reason: format!("cannot resolve {}: {error}", parent.display()),
-        })?
-        .join(file_name))
+    let mut resolved =
+        std::fs::canonicalize(ancestor).map_err(|error| invalid_path(error.to_string()))?;
+    if !missing.is_empty() && !resolved.is_dir() {
+        return Err(invalid_path("existing ancestor is not a directory".into()));
+    }
+    for name in missing.into_iter().rev() {
+        resolved.push(name);
+    }
+    Ok(resolved)
 }
 
 /// One desired global shortcut: stable prompt identity plus the user's
@@ -577,6 +591,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("runtime root");
         let data_root = dir.path().join("data");
         std::fs::create_dir(&data_root).expect("data root");
+        let canonical_root = std::fs::canonicalize(&data_root).expect("canonical data root");
         let diagnostics = data_root.join("diagnostics.jsonl");
         let config = DesktopConfig::default();
         let runtime = DesktopRuntime::from_parts(
@@ -591,10 +606,16 @@ mod tests {
 
         assert_eq!(runtime.config(), config);
         assert_eq!(runtime.app_id(), "io.github.roymejia2217.JamePrompt.Test");
-        assert_eq!(runtime.data_root(), data_root);
-        assert_eq!(runtime.db_path(), data_root.join("prompts.db"));
-        assert_eq!(runtime.settings_path(), data_root.join("settings.json"));
-        assert_eq!(runtime.diagnostics_path(), Some(diagnostics.as_path()));
+        assert_eq!(runtime.data_root(), canonical_root);
+        assert_eq!(runtime.db_path(), canonical_root.join("prompts.db"));
+        assert_eq!(
+            runtime.settings_path(),
+            canonical_root.join("settings.json")
+        );
+        assert_eq!(
+            runtime.diagnostics_path(),
+            Some(canonical_root.join("diagnostics.jsonl").as_path())
+        );
         assert_eq!(runtime.mode(), RuntimeMode::Synthetic);
         assert!(!runtime.native_consent_authorized());
     }
@@ -617,6 +638,45 @@ mod tests {
         .expect_err("diagnostics must remain private");
 
         assert_eq!(error.variable, "JAME_PROMPT_DESKTOP_DIAGNOSTICS_PATH");
+    }
+
+    #[test]
+    fn runtime_resolves_missing_nested_paths_without_creating_them() {
+        let dir = tempfile::tempdir().expect("existing ancestor");
+        let root = dir.path().join("missing/data");
+        let runtime = DesktopRuntime::from_parts(
+            DesktopConfig::default(),
+            "io.github.roymejia2217.JamePrompt.Test",
+            root.clone(),
+            Some(root.join("diagnostics.jsonl")),
+            RuntimeMode::Synthetic,
+            false,
+        )
+        .expect("missing descendants must resolve without filesystem mutation");
+        let expected = std::fs::canonicalize(dir.path())
+            .unwrap()
+            .join("missing/data");
+        assert_eq!(runtime.data_root(), expected);
+        assert_eq!(
+            runtime.diagnostics_path(),
+            Some(expected.join("diagnostics.jsonl").as_path())
+        );
+        assert!(!dir.path().join("missing").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_rejects_dangling_data_root_symlink() {
+        let dir = tempfile::tempdir().expect("existing ancestor");
+        let alias = dir.path().join("alias");
+        std::os::unix::fs::symlink(dir.path().join("missing"), &alias).unwrap();
+        assert!(canonicalize_for_runtime(&alias).is_err());
+    }
+
+    #[test]
+    fn runtime_rejects_parent_traversal_through_missing_ancestors() {
+        let dir = tempfile::tempdir().expect("existing ancestor");
+        assert!(canonicalize_for_runtime(&dir.path().join("missing/../outside")).is_err());
     }
 
     #[test]
