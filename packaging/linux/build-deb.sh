@@ -1,5 +1,5 @@
 #!/bin/sh
-set -e
+set -eu
 
 APP_ID="jame-prompt"
 DESKTOP_APP_ID="io.github.roymejia2217.JamePrompt"
@@ -13,13 +13,16 @@ fi
 ARCH="$(dpkg --print-architecture)"
 ROOT="target/debian/${APP_ID}_${VERSION}_${ARCH}"
 DEB="target/debian/${APP_ID}_${VERSION}_${ARCH}.deb"
+ICON_STAGE="$(mktemp -d)"
+trap 'rm -rf "$ICON_STAGE"' EXIT
 
 if [ -z "$UPSTREAM_VERSION" ]; then
     echo "Unable to read package version from Cargo.toml" >&2
     exit 1
 fi
 
-/usr/bin/python3 - <<'PY'
+ICON_STAGE="$ICON_STAGE" /usr/bin/python3 - <<'PY'
+import os
 from pathlib import Path
 from PIL import Image
 
@@ -30,7 +33,7 @@ if not src.exists():
 img = Image.open(src).convert("RGBA")
 
 for size in [16, 22, 24, 32, 48, 64, 128, 256, 512]:
-    target = Path("assets/icons/hicolor") / f"{size}x{size}" / "apps" / "jame-prompt.png"
+    target = Path(os.environ["ICON_STAGE"]) / f"{size}x{size}" / "apps" / "jame-prompt.png"
     target.parent.mkdir(parents=True, exist_ok=True)
     img.resize((size, size), Image.Resampling.LANCZOS).save(target, optimize=True)
 PY
@@ -52,7 +55,7 @@ install -Dm644 "packaging/linux/${APP_ID}.1" "$ROOT/usr/share/man/man1/${APP_ID}
 gzip -n -9 "$ROOT/usr/share/doc/${APP_ID}/changelog"
 gzip -n -9 "$ROOT/usr/share/man/man1/${APP_ID}.1"
 
-for icon in assets/icons/hicolor/*/apps/${APP_ID}.png; do
+for icon in "$ICON_STAGE"/*/apps/${APP_ID}.png; do
     size="$(basename "$(dirname "$(dirname "$icon")")")"
     install -Dm644 "$icon" "$ROOT/usr/share/icons/hicolor/${size}/apps/${APP_ID}.png"
 done

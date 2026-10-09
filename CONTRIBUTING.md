@@ -175,11 +175,16 @@ npm run test:release-metadata
 npm run test:release-gate
 ```
 
-Run the complete local acceptance gate with:
+Run the fast local contract gate with:
 
 ```bash
 npm run verify:change
 ```
+
+This gate provides local feedback only. Required GitHub checks remain authoritative
+for the full Rust matrix, native GNOME/Wayland session, package policy, and
+install/purge lifecycle evidence. Do not run the package lifecycle validator on a
+developer workstation.
 
 ## Delivery gates
 

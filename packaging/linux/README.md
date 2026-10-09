@@ -4,8 +4,9 @@ JamePrompt supports native Linux package formats that preserve the full product
 surface: global hotkeys, clipboard copy, paste simulation, system tray behavior,
 desktop launch integration, and autostart.
 
-The root `build.sh` orchestrator drives all supported package builds from one
-place after cleaning `target/` and building the Rust release binary once.
+Each package target has an explicit builder and validation path. Required package
+and lifecycle evidence runs in the pinned remote CI environments; a workstation
+build of one target is not evidence that every package target was built.
 
 Flatpak is not supported at this time. The application requires global hotkeys
 and paste simulation into other applications, and those behaviors must not be
