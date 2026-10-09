@@ -4,6 +4,7 @@
 /dist/
 .agents/
 .codex/
+.opencode/
 .AppImage
 *.AppImage
 *.deb
