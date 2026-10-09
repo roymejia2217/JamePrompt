@@ -429,7 +429,7 @@ mod tests {
             DesktopRuntime::from_parts(
                 crate::desktop::DesktopConfig::default(),
                 "io.github.roymejia2217.JamePrompt.Test",
-                std::path::PathBuf::from("/tmp"),
+                std::env::temp_dir(),
                 None,
                 RuntimeMode::Production,
                 false,
@@ -457,7 +457,7 @@ mod tests {
             DesktopRuntime::from_parts(
                 crate::desktop::DesktopConfig::default(),
                 "io.github.roymejia2217.JamePrompt.Test",
-                std::path::PathBuf::from("/tmp"),
+                std::env::temp_dir(),
                 None,
                 RuntimeMode::Production,
                 false,
@@ -477,7 +477,7 @@ mod tests {
             DesktopRuntime::from_parts(
                 crate::desktop::DesktopConfig::default(),
                 "io.github.roymejia2217.JamePrompt.Test",
-                std::path::PathBuf::from("/tmp"),
+                std::env::temp_dir(),
                 None,
                 RuntimeMode::Synthetic,
                 false,

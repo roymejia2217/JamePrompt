@@ -193,17 +193,21 @@ mod tests {
 
     #[test]
     fn desktop_test_mode_accepts_absolute_pair() {
+        let root = std::env::temp_dir().join("jameprompt-launch-test");
+        let controller_socket = root.join("controller.sock");
+        let profile_path = root.join("profile.json");
         let args = [
             OsString::from("jame-prompt"),
             OsString::from("--desktop-test-controller"),
-            OsString::from("/tmp/run/controller.sock"),
-            OsString::from("--desktop-test-profile=/tmp/run/profile.json"),
+            controller_socket.clone().into_os_string(),
+            OsString::from("--desktop-test-profile"),
+            profile_path.clone().into_os_string(),
         ];
         assert_eq!(
             desktop_test_mode_from_args(args, true),
             Ok(Some(DesktopTestMode {
-                controller_socket: std::path::PathBuf::from("/tmp/run/controller.sock"),
-                profile_path: std::path::PathBuf::from("/tmp/run/profile.json"),
+                controller_socket,
+                profile_path,
             }))
         );
     }
