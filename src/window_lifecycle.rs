@@ -1,6 +1,7 @@
+#[cfg(target_os = "linux")]
+use crate::config::LINUX_DESKTOP_APP_ID;
 use crate::config::{
-    LINUX_DESKTOP_APP_ID, WINDOW_INITIAL_HEIGHT, WINDOW_INITIAL_WIDTH, WINDOW_MIN_HEIGHT,
-    WINDOW_MIN_WIDTH,
+    WINDOW_INITIAL_HEIGHT, WINDOW_INITIAL_WIDTH, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH,
 };
 use crate::ui::Message;
 use iced::{window, Size, Task};
@@ -31,7 +32,7 @@ pub(crate) fn settings() -> window::Settings {
     let icon = window::icon::from_file_data(APP_ICON_PNG, None)
         .expect("Failed to load app icon from embedded PNG");
 
-    let mut settings = window::Settings {
+    let settings = window::Settings {
         size: Size::new(WINDOW_INITIAL_WIDTH, WINDOW_INITIAL_HEIGHT),
         min_size: Some(Size::new(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)),
         position: window::Position::Centered,
@@ -42,9 +43,11 @@ pub(crate) fn settings() -> window::Settings {
     };
 
     #[cfg(target_os = "linux")]
-    {
+    let settings = {
+        let mut settings = settings;
         settings.platform_specific.application_id = LINUX_DESKTOP_APP_ID.into();
-    }
+        settings
+    };
 
     settings
 }

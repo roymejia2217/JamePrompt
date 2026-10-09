@@ -133,9 +133,11 @@ use crate::config::{
     get_current_year, Settings, APP_DESCRIPTION, APP_NAME, APP_VERSION, WINDOW_INITIAL_WIDTH,
 };
 use crate::db::Database;
+#[cfg(target_os = "linux")]
+use crate::desktop::ParentContext;
 use crate::desktop::{
-    CancelOutcome, DesktopRuntime, HotkeyEvent, ParentContext, RuntimeMode,
-    ShortcutAcknowledgement, ShortcutSnapshot, ShortcutSpec, ShortcutStatus,
+    CancelOutcome, DesktopRuntime, HotkeyEvent, RuntimeMode, ShortcutAcknowledgement,
+    ShortcutSnapshot, ShortcutSpec, ShortcutStatus,
 };
 use crate::desktop_diagnostics::DesktopDiagnostics;
 #[cfg(target_os = "linux")]
@@ -489,6 +491,7 @@ impl Default for JamePromptApp {
             window_state: WindowState::absent(),
             #[cfg(target_os = "linux")]
             parent_lease: None,
+            #[cfg(target_os = "linux")]
             accessibility: None,
             window_focused: false,
             close_awaiting_cancel: false,
@@ -553,6 +556,7 @@ impl JamePromptApp {
             window_state: WindowState::absent(),
             #[cfg(target_os = "linux")]
             parent_lease: None,
+            #[cfg(target_os = "linux")]
             accessibility: None,
             window_focused: false,
             close_awaiting_cancel: false,
@@ -1363,6 +1367,7 @@ impl JamePromptApp {
             window_state: WindowState::absent(),
             #[cfg(target_os = "linux")]
             parent_lease: None,
+            #[cfg(target_os = "linux")]
             accessibility: None,
             window_focused: false,
             close_awaiting_cancel: false,
@@ -1454,6 +1459,7 @@ impl JamePromptApp {
             window_state: WindowState::absent(),
             #[cfg(target_os = "linux")]
             parent_lease: None,
+            #[cfg(target_os = "linux")]
             accessibility: None,
             window_focused: false,
             close_awaiting_cancel: false,
