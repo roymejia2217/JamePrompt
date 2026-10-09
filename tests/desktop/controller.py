@@ -112,7 +112,10 @@ def running_controller(binary: Path) -> Iterator[ControllerClient]:
             client: ControllerClient | None = None
             while client is None and time.monotonic() < deadline:
                 if process.poll() is not None:
-                    raise RuntimeError("test binary exited before creating the controller socket")
+                    raise RuntimeError(
+                        "test binary exited before creating the controller socket "
+                        f"with status {process.returncode}"
+                    )
                 if socket_path.exists():
                     connection: socket.socket | None = None
                     try:

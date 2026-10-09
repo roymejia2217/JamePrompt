@@ -3,11 +3,12 @@
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import threading
 
 import pytest
 
-from .controller import ControllerClient
+from .controller import ControllerClient, running_controller
 from .protocol import Event, MAX_PACKET_BYTES, ProtocolError, Response, decode_frame, encode_request
 from .preflight import missing_native_requirements
 
@@ -21,6 +22,13 @@ def test_pyproject_declares_locked_pytest_project() -> None:
     assert '"pytest==9.0.2"' in project
     assert lock.is_file()
     assert "name = \"pytest\"" in lock.read_text()
+
+
+def test_controller_startup_failure_reports_child_exit_status() -> None:
+    # Python rejects the application's CLI switches before opening a socket.
+    with pytest.raises(RuntimeError, match="before creating the controller socket.*status 2"):
+        with running_controller(Path(sys.executable)):
+            pytest.fail("a child that rejects startup must never yield a controller")
 
 
 def test_request_is_versioned_and_bounded() -> None:

@@ -52,6 +52,11 @@ The Rust binary owns production state transitions. The controller only sends
 bounded, reviewed operations through the normal application message path. It
 does not write SQLite directly, invoke a shell, mutate production data, or
 accept TCP connections.
+Synthetic startup resolves the production-data identity read-only, even when its
+ancestors are absent on a fresh runner. It does not create production directories;
+dangling symlinks and paths escaping the private run root fail validation.
+Early controller startup failures report the child exit status without exposing
+raw application output.
 
 ## Test Boundaries
 
